@@ -119,15 +119,15 @@ This document describes the planned database entities, their relationships, and 
 
 The planned system consists of the following entities:
 
-| Entity               | Purpose                          | Status           |
-| -------------------- | -------------------------------- | ---------------- |
-| **User**             | Application users                | Later            |
-| **Document** ⭐       | Main document entity             | **Week 1**       |
-| **Block** ⭐          | Nested AST structure             | **Week 1**       |
-| **DocumentUser**     | User-document membership & roles | Later / Optional |
-| **Revision**         | Document version history         | Optional         |
-| **Collaboration**    | Live presence & cursor state     | Week 2           |
-| **YDoc / Yjs State** | Persisted CRDT state             | Optional         |
+| Entity               | Purpose                          
+| -------------------- | -------------------------------- 
+| **User**             | Application users                
+| **Document** ⭐       | Main document entity           
+| **Block** ⭐          | Nested AST structure             
+| **DocumentUser**     | User-document membership & roles 
+| **Revision**         | Document version history         
+| **Collaboration**    | Live presence & cursor state     
+| **YDoc / Yjs State** | Persisted CRDT state             
 
 ---
 
