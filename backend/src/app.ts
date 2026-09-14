@@ -1,7 +1,6 @@
 import express from "express";
 import cors from "cors";
-
-//import documentRoutes from "./routes/documentRoutes.js";
+import documentRoute from "./routes/documentRoute";
 
 const app = express();
 
@@ -14,6 +13,6 @@ app.get("/", (_req, res) => {
     });
 });
 
-//app.use("/api/documents", documentRoutes);
+app.use("/api/documents", documentRoute);
 
 export default app;
