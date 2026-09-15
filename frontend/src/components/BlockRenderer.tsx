@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { Block } from "../types/document";
 
 interface BlockRendererProps {
@@ -5,9 +6,14 @@ interface BlockRendererProps {
 }
 
 function BlockRenderer({ block }: BlockRendererProps) {
+    const [content, setContent] = useState(block.content);
+
     return (
         <div>
-            <p>{block.content}</p>
+            <textarea
+                value={content}
+                onChange={(event) => setContent(event.target.value)}
+            />
 
             {block.children.map((child) => (
                 <BlockRenderer

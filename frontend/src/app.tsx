@@ -1,6 +1,6 @@
 import DocumentList from "./components/DocumentList";
 
-function app() {
+function App() {
     return (
         <div>
             <h1>SyncDoc</h1>
@@ -10,4 +10,4 @@ function app() {
     );
 }
 
-export default app;
+export default App;

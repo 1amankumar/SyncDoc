@@ -1,34 +1,26 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Document } from "../types/document";
-import BlockRenderer from "./BlockRenderer";
+import { getDocuments } from "../services/documentService";
+import DocumentPage from "../pages/DocumentPage";
 
 function DocumentList() {
+    const [documents, setDocuments] = useState<Document[]>([]);
     const [selectedDocument, setSelectedDocument] =
         useState<Document | null>(null);
 
-    const documents: Document[] = [
-        {
-            _id: "1",
-            title: "My First SyncDoc",
-            blocks: [
-                {
-                    _id: "1",
-                    type: "paragraph",
-                    content: "Hello SyncDoc",
-                    children: [
-                        {
-                            _id: "2",
-                            type: "paragraph",
-                            content: "This is a child block",
-                            children: []
-                        }
-                    ]
-                }
-            ],
-            createdAt: "",
-            updatedAt: ""
-        }
-    ];
+    useEffect(() => {
+        const loadDocuments = async () => {
+            try {
+                const data = await getDocuments();
+
+                setDocuments(data);
+            } catch (error) {
+                console.error("Failed to load documents:", error);
+            }
+        };
+
+        loadDocuments();
+    }, []);
 
     return (
         <div>
@@ -45,16 +37,7 @@ function DocumentList() {
             ))}
 
             {selectedDocument && (
-                <div>
-                    <h2>{selectedDocument.title}</h2>
-
-                    {selectedDocument.blocks.map((block) => (
-                        <BlockRenderer
-                            key={block._id}
-                            block={block}
-                        />
-                    ))}
-                </div>
+                <DocumentPage document={selectedDocument} />
             )}
         </div>
     );
