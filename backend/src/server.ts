@@ -1,5 +1,5 @@
 import dotenv from "dotenv";
-
+import "./websocket/websocketServer.js";
 import app from "./app";
 import connectDB from "./config/db";
 
