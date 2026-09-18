@@ -1,11 +1,14 @@
 import express from "express";
 import cors from "cors";
 import documentRoute from "./routes/documentRoute";
+import authRoutes from "./routes/authRoute";
+import cookieParser from "cookie-parser";
 
 const app = express();
 
 app.use(cors());
 app.use(express.json());
+app.use(cookieParser());
 
 app.get("/", (_req, res) => {
     res.json({
@@ -14,5 +17,6 @@ app.get("/", (_req, res) => {
 });
 
 app.use("/api/documents", documentRoute);
+app.use("/api/auth", authRoutes);
 
 export default app;
