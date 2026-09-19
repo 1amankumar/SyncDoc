@@ -1,39 +1,99 @@
 import * as Y from "yjs";
+import type { Block } from "../types/document";
 
-const ydoc = new Y.Doc();
+export const ydoc = new Y.Doc();
 
-const document = ydoc.getMap("document");
+export const blocks =
+    ydoc.getMap<string>("blocks");
 
-const socket = new WebSocket("ws://localhost:5001");
-
-socket.onopen = () => {
-    console.log("Connected to WebSocket server");
-
-    document.set("title", "Hello from React");
-
-    const update = Y.encodeStateAsUpdate(ydoc);
-
-    const buffer = update.buffer.slice(
-        update.byteOffset,
-        update.byteOffset + update.byteLength
-    )as ArrayBuffer
-
-    socket.send(buffer);
-};
-
-socket.onmessage = async (event) => {
-    console.log("Update received from server");
-
-    const data = await event.data.arrayBuffer();
-
-    const update = new Uint8Array(data);
-
-    Y.applyUpdate(ydoc, update);
-
-    console.log(
-        "Current title:",
-        document.get("title")
+export const connectToDocument = (
+    documentId: string,
+    documentBlocks: Block[]
+): void => {
+    const socket = new WebSocket(
+        `ws://localhost:5001/document/${documentId}`
     );
-};
 
-export default socket;
+    const handleYjsUpdate = (
+        update: Uint8Array,
+        origin: unknown
+    ): void => {
+        // Do not send remote updates back
+        // to the server.
+        if (origin === "remote") {
+            return;
+        }
+
+        // Socket must be connected.
+        if (socket.readyState !== WebSocket.OPEN) {
+            return;
+        }
+
+        const buffer = update.buffer.slice(
+            update.byteOffset,
+            update.byteOffset + update.byteLength
+        ) as ArrayBuffer;
+
+        socket.send(buffer);
+    };
+
+    // Listen for local Yjs changes.
+    ydoc.on(
+        "update",
+        handleYjsUpdate
+    );
+
+    socket.onopen = () => {
+        console.log(
+            "Connected to document:",
+            documentId
+        );
+
+        documentBlocks.forEach((block) => {
+            blocks.set(
+                block._id,
+                block.content
+            );
+        });
+    };
+
+    socket.onmessage = async (event) => {
+        console.log(
+            "Update received for document:",
+            documentId
+        );
+
+        const data =
+            await event.data.arrayBuffer();
+
+        const update =
+            new Uint8Array(data);
+
+        // Apply update as remote.
+        Y.applyUpdate(
+            ydoc,
+            update,
+            "remote"
+        );
+    };
+
+    socket.onclose = () => {
+        console.log(
+            "Disconnected from document:",
+            documentId
+        );
+
+        // Remove this connection's Yjs listener.
+        ydoc.off(
+            "update",
+            handleYjsUpdate
+        );
+    };
+
+    socket.onerror = (error) => {
+        console.error(
+            "WebSocket error:",
+            error
+        );
+    };
+};

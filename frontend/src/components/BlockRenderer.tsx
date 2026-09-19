@@ -1,20 +1,50 @@
+import {
+    useEffect,
+    useState
+} from "react";
+
 import type { Block } from "../types/document";
+
+import {
+    blocks,
+    ydoc
+} from "../services/websocketService";
 
 interface BlockRendererProps {
     block: Block;
 }
 
-// BlockRenderer decides which UI should be displayed
-// based on the type of the AST block.
-function BlockRenderer({ block }: BlockRendererProps) {
+function BlockRenderer({
+    block
+}: BlockRendererProps) {
+    const [content, setContent] = useState(
+        block.content
+    );
 
-    // Render a heading block
+    
+
+    const handleChange = (
+        event: React.ChangeEvent<HTMLTextAreaElement>
+    ) => {
+        const newContent =
+            event.target.value;
+
+        setContent(newContent);
+
+        blocks.set(
+            block._id,
+            newContent
+        );
+    };
+
     if (block.type === "heading") {
         return (
             <div>
-                <h2>{block.content}</h2>
+                <textarea
+                    value={content}
+                    onChange={handleChange}
+                />
 
-                {/* Render any child blocks recursively */}
                 {block.children.map((child) => (
                     <BlockRenderer
                         key={child._id}
@@ -25,15 +55,14 @@ function BlockRenderer({ block }: BlockRendererProps) {
         );
     }
 
-    // Render a code block
     if (block.type === "code") {
         return (
             <div>
-                <pre>
-                    <code>{block.content}</code>
-                </pre>
+                <textarea
+                    value={content}
+                    onChange={handleChange}
+                />
 
-                {/* Render any child blocks recursively */}
                 {block.children.map((child) => (
                     <BlockRenderer
                         key={child._id}
@@ -44,13 +73,13 @@ function BlockRenderer({ block }: BlockRendererProps) {
         );
     }
 
-    // By default, render the block as a paragraph.
-    // This handles "paragraph" blocks.
     return (
         <div>
-            <p>{block.content}</p>
+            <textarea
+                value={content}
+                onChange={handleChange}
+            />
 
-            {/* Render any child blocks recursively */}
             {block.children.map((child) => (
                 <BlockRenderer
                     key={child._id}

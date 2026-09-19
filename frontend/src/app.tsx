@@ -1,5 +1,4 @@
 import DocumentList from "./components/DocumentList";
-import "./services/websocketService";
 
 function App() {
     return (

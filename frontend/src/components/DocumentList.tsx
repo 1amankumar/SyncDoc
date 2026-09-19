@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { Document } from "../types/document";
 import { getDocuments } from "../services/documentService";
 import DocumentPage from "../pages/DocumentPage";
+import { connectToDocument } from "../services/websocketService";
 
 function DocumentList() {
     // Stores all documents received from the backend.
@@ -67,7 +68,13 @@ function DocumentList() {
                 documents.map((document) => (
                     <div key={document._id}>
                         <button
-                            onClick={() => setSelectedDocument(document)}
+                            onClick={() => {
+                                setSelectedDocument(document);
+                                connectToDocument(
+                                    document._id,
+                                    document.blocks
+                                );
+                            }}
                         >
                             {document.title}
                         </button>
