@@ -29,37 +29,57 @@ function BlockRenderer({
     // --------------------------------
     // Y.Text synchronization
     // --------------------------------
-    useEffect(() => {
+    // --------------------------------
+// Y.Text synchronization
+// --------------------------------
+useEffect(() => {
+    let sharedText = blocks.get(block._id);
 
-        const sharedText =
-            blocks.get(block._id);
+    let textObserver:
+        (() => void) | null = null;
 
-        if (!sharedText) {
+    const attachToBlock = () => {
+        const text = blocks.get(block._id);
+
+        if (!text) {
             return;
         }
 
+        // Prevent attaching again to the same Y.Text
+        if (sharedText === text) {
+            return;
+        }
+
+        sharedText = text;
+
         const updateContent = () => {
-            setContent(
-                sharedText.toString()
-            );
+            setContent(text.toString());
         };
 
         // Get current Y.Text content
         updateContent();
 
-        // Listen for remote/local changes
-        const observer = () => {
-            updateContent();
-        };
+        // Listen for Y.Text changes
+        text.observe(updateContent);
 
-        sharedText.observe(observer);
+        textObserver = updateContent;
+    };
 
-        // Cleanup observer
-        return () => {
-            sharedText.unobserve(observer);
-        };
+    // Try immediately
+    attachToBlock();
 
-    }, [block._id]);
+    // Watch the blocks map.
+    // This catches blocks.set(blockId, Y.Text)
+    blocks.observe(attachToBlock);
+
+    return () => {
+        blocks.unobserve(attachToBlock);
+
+        if (sharedText && textObserver) {
+            sharedText.unobserve(textObserver);
+        }
+    };
+}, [block._id]);
 
 
     // --------------------------------
@@ -109,131 +129,147 @@ function BlockRenderer({
     // Handle text changes
     // --------------------------------
     const handleChange = (
-    event: React.ChangeEvent<HTMLTextAreaElement>
-) => {
-    const newContent =
-        event.target.value;
+        event: React.ChangeEvent<HTMLTextAreaElement>
+    ) => {
+        const newContent =
+            event.target.value;
 
-    const sharedText =
-        blocks.get(block._id);
+        const sharedText =
+            blocks.get(block._id);
 
-    if (!sharedText) {
-        return;
-    }
+        if (!sharedText) {
+            return;
+        }
 
-    const oldContent =
-        sharedText.toString();
+        const oldContent =
+            sharedText.toString();
 
-    let start = 0;
+        let start = 0;
 
-    while (
-        start < oldContent.length &&
-        start < newContent.length &&
-        oldContent[start] === newContent[start]
-    ) {
-        start++;
-    }
+        while (
+            start < oldContent.length &&
+            start < newContent.length &&
+            oldContent[start] === newContent[start]
+        ) {
+            start++;
+        }
 
-    let oldEnd = oldContent.length;
-    let newEnd = newContent.length;
+        let oldEnd = oldContent.length;
+        let newEnd = newContent.length;
 
-    while (
-        oldEnd > start &&
-        newEnd > start &&
-        oldContent[oldEnd - 1] ===
+        while (
+            oldEnd > start &&
+            newEnd > start &&
+            oldContent[oldEnd - 1] ===
             newContent[newEnd - 1]
-    ) {
-        oldEnd--;
-        newEnd--;
-    }
+        ) {
+            oldEnd--;
+            newEnd--;
+        }
 
-    const deleteLength =
-        oldEnd - start;
+        const deleteLength =
+            oldEnd - start;
 
-    const insertedText =
-        newContent.slice(
-            start,
-            newEnd
-        );
+        const insertedText =
+            newContent.slice(
+                start,
+                newEnd
+            );
 
-    if (deleteLength > 0) {
-        sharedText.delete(
-            start,
-            deleteLength
-        );
-    }
+        if (deleteLength > 0) {
+            sharedText.delete(
+                start,
+                deleteLength
+            );
+        }
 
-    if (insertedText.length > 0) {
-        sharedText.insert(
-            start,
-            insertedText
-        );
-    }
-};
+        if (insertedText.length > 0) {
+            sharedText.insert(
+                start,
+                insertedText
+            );
+        }
+    };
 
 
     // --------------------------------
     // When user enters a block
     // --------------------------------
-    const handleFocus = () => {
+   const handleFocus = () => {
+    const lockedBy = blockLocks.get(block._id);
 
-        console.log(
-            "TEXTAREA FOCUS:",
+    console.log(
+        "TEXTAREA FOCUS:",
+        block._id,
+        "lockedBy:",
+        lockedBy,
+        "myUserId:",
+        userId
+    );
+
+    // Nobody owns the block
+    if (!lockedBy) {
+        blockLocks.set(
             block._id,
-            "isLocked:",
-            isLocked
+            userId
         );
 
-        const lockedBy =
-            blockLocks.get(block._id);
+        console.log(
+            "LOCK ACQUIRED:",
+            block._id
+        );
 
-        // Lock only if:
-        // 1. Nobody owns the lock
-        // 2. Current user already owns it
-        if (
-            !lockedBy ||
-            lockedBy === userId
-        ) {
-            blockLocks.set(
-                block._id,
-                userId
-            );
-        }
-    };
+        return;
+    }
 
+    // I already own the block
+    if (lockedBy === userId) {
+        console.log(
+            "LOCK ALREADY OWNED:",
+            block._id
+        );
 
-    // --------------------------------
-    // When user leaves a block
-    // --------------------------------
-    const handleBlur = () => {
+        return;
+    }
 
-        const lockedBy =
-            blockLocks.get(block._id);
-
-        // Only remove our own lock
-        if (lockedBy === userId) {
-
-            blockLocks.delete(
-                block._id
-            );
-        }
-    };
+    // Another user owns the block
+    console.log(
+        "BLOCK LOCKED BY ANOTHER USER:",
+        lockedBy
+    );
+};
 
 
     // --------------------------------
     // Common textarea
     // --------------------------------
     const renderTextarea = () => {
-        return (
+    return (
+        <div>
+
+            {isLocked && (
+                <p>
+                    🔒 This block is being edited by another user
+                </p>
+            )}
+
+            {!isLocked &&
+                blockLocks.get(block._id) === userId && (
+                    <p>
+                        ✏️ You are editing this block
+                    </p>
+                )}
+
             <textarea
                 value={content}
                 onChange={handleChange}
-                readOnly={false}
+                readOnly={isLocked}
                 onFocus={handleFocus}
-                onBlur={handleBlur}
             />
-        );
-    };
+
+        </div>
+    );
+};
 
 
     // --------------------------------

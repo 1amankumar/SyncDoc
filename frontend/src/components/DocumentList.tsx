@@ -3,6 +3,8 @@ import type { Document } from "../types/document";
 import { getDocuments } from "../services/documentService";
 import DocumentPage from "../pages/DocumentPage";
 import { connectToDocument } from "../services/websocketService";
+import LogoutButton from "../pages/Logout";
+import { useNavigate } from "react-router-dom";
 
 function DocumentList() {
     // Stores all documents received from the backend.
@@ -19,6 +21,8 @@ function DocumentList() {
     // Stores an error message if the API request fails.
     const [error, setError] = useState<string | null>(null);
 
+    const navigate = useNavigate();
+
     useEffect(() => {
         const loadDocuments = async () => {
             try {
@@ -34,11 +38,32 @@ function DocumentList() {
                 // Store the received documents in React state.
                 setDocuments(data);
             } catch (error) {
-                console.error("Failed to load documents:", error);
 
-                // Show a user-friendly error message in the UI.
-                setError("Failed to load documents.");
-            } finally {
+                console.error(
+                    "Failed to load documents:",
+                    error
+                );
+
+                if (
+                    error instanceof Error &&
+                    error.message === "UNAUTHORIZED"
+                ) {
+
+                    navigate(
+                        "/login",
+                        {
+                            replace: true
+                        }
+                    );
+
+                    return;
+                }
+
+                setError(
+                    "Failed to load documents."
+                );
+            }
+            finally {
                 // Stop the loading state whether the request succeeds or fails.
                 setLoading(false);
             }
@@ -50,6 +75,16 @@ function DocumentList() {
     return (
         <div>
             <h2>Documents</h2>
+
+            <div>
+
+                <LogoutButton />
+
+                <h2>Documents</h2>
+
+                {/* existing code */}
+
+            </div>
 
             {/* Show this while documents are being fetched. */}
             {loading && <p>Loading documents...</p>}

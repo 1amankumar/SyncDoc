@@ -1,12 +1,24 @@
 import { Router } from "express";
+
 import {
     createDocument,
     getDocuments
 } from "../controllers/documentController.js";
 
-const router = Router()
+import { protect } from "../middlewares/authMiddleware.js";
 
-router.post("/", createDocument);
-router.get("/", getDocuments);
+const router = Router();
+
+router.post(
+    "/",
+    protect,
+    createDocument
+);
+
+router.get(
+    "/",
+    protect,
+    getDocuments
+);
 
 export default router;
