@@ -1,82 +1,254 @@
 import {
     WebSocketServer,
-    WebSocket as WebSocketClient
+    WebSocket
 } from "ws";
+
 import * as Y from "yjs";
 
 const documents = new Map<string, Y.Doc>();
 
-const clients = new Map<string, Set<WebSocketClient>>();
+const clients =
+    new Map<string, Set<WebSocket>>();
+
 const ws = new WebSocketServer({
     port: 5001
 });
 
-ws.on("connection", (socket, request) => {
-    const url = new URL(
-        request.url || "",
-        "http://localhost"
-    );
+ws.on(
+    "connection",
+    (socket, request) => {
 
-    const documentId = url.pathname.split("/")[2];
+        const url = new URL(
+            request.url || "",
+            "http://localhost"
+        );
 
-    if (!documentId) {
-        socket.close();
-        return;
-    }
+        const documentId =
+            url.pathname.split("/")[2];
 
-    console.log(
-        "Client connected to document:",
-        documentId
-    );
+        const userId =
+            url.searchParams.get("userId");
 
-    // Get or create Yjs document
-    let ydoc = documents.get(documentId);
+        if (!documentId || !userId) {
+            socket.close();
+            return;
+        }
 
-    if (!ydoc) {
-        ydoc = new Y.Doc();
-        documents.set(documentId, ydoc);
-    }
-
-    // Get or create clients group
-    let documentClients = clients.get(documentId);
-
-    if (!documentClients) {
-        documentClients = new Set();
-        clients.set(documentId, documentClients);
-    }
-
-    documentClients.add(socket);
-
-    socket.on("message", (message) => {
         console.log(
-            "Yjs update received for document:",
-            documentId
+            "Client connected:",
+            documentId,
+            userId
         );
 
-        const update = new Uint8Array(
-            message as Buffer
-        );
+        const isNewDocument =
+            !documents.has(documentId);
 
-        // Apply update to this document
-        Y.applyUpdate(ydoc, update);
+        let ydoc =
+            documents.get(documentId);
 
-        // Send only to clients of this document
-        documentClients.forEach((client) => {
-            if (
-                client !== socket &&
-                client.readyState === 1
-            ) {
-                client.send(update);
+        if (!ydoc) {
+            ydoc = new Y.Doc();
+
+            documents.set(
+                documentId,
+                ydoc
+            );
+        }
+
+        // --------------------------------
+        // Send initial document state
+        // --------------------------------
+
+        if (isNewDocument) {
+
+            socket.send(
+                JSON.stringify({
+                    type: "initialize"
+                })
+            );
+
+        } else {
+
+            const currentState =
+                Y.encodeStateAsUpdate(
+                    ydoc
+                );
+
+            if (currentState.length > 0) {
+
+                socket.send(
+                    currentState
+                );
             }
-        });
-    });
+        }
 
-    socket.on("close", () => {
-        documentClients?.delete(socket);
+        // --------------------------------
+        // Add client to document
+        // --------------------------------
 
-        console.log(
-            "Client disconnected from document:",
-            documentId
+        let documentClients =
+            clients.get(documentId);
+
+        if (!documentClients) {
+
+            documentClients =
+                new Set<WebSocket>();
+
+            clients.set(
+                documentId,
+                documentClients
+            );
+        }
+
+        documentClients.add(socket);
+
+        // --------------------------------
+        // Receive Yjs updates
+        // --------------------------------
+
+        socket.on(
+            "message",
+            (message) => {
+
+                console.log(
+                    "Yjs update received for document:",
+                    documentId
+                );
+
+                const update =
+                    new Uint8Array(
+                        message as Buffer
+                    );
+
+                Y.applyUpdate(
+                    ydoc!,
+                    update
+                );
+
+                // Send update to other clients
+                documentClients?.forEach(
+                    (client) => {
+
+                        if (
+                            client !== socket &&
+                            client.readyState ===
+                                WebSocket.OPEN
+                        ) {
+
+                            client.send(
+                                update
+                            );
+                        }
+                    }
+                );
+            }
         );
-    });
-});
+
+        // --------------------------------
+        // Client disconnected
+        // --------------------------------
+
+        socket.on(
+            "close",
+            () => {
+
+                console.log(
+                    "Client disconnected:",
+                    documentId,
+                    userId
+                );
+
+                documentClients?.delete(
+                    socket
+                );
+
+                // --------------------------------
+                // Remove locks owned by this user
+                // --------------------------------
+
+                const blockLocks =
+                    ydoc!.getMap<string>(
+                        "blockLocks"
+                    );
+
+                const stateBefore =
+                    Y.encodeStateVector(
+                        ydoc!
+                    );
+
+                ydoc!.transact(() => {
+
+                    blockLocks.forEach(
+                        (
+                            lockedBy,
+                            blockId
+                        ) => {
+
+                            if (
+                                lockedBy ===
+                                userId
+                            ) {
+
+                                blockLocks.delete(
+                                    blockId
+                                );
+                            }
+                        }
+                    );
+
+                });
+
+                // --------------------------------
+                // Create only the changes made
+                // by the cleanup above
+                // --------------------------------
+
+                const lockCleanupUpdate =
+                    Y.encodeStateAsUpdate(
+                        ydoc!,
+                        stateBefore
+                    );
+
+                // --------------------------------
+                // Broadcast lock cleanup
+                // --------------------------------
+
+                if (
+                    lockCleanupUpdate.length >
+                    0
+                ) {
+
+                    documentClients?.forEach(
+                        (client) => {
+
+                            if (
+                                client.readyState ===
+                                    WebSocket.OPEN
+                            ) {
+
+                                client.send(
+                                    lockCleanupUpdate
+                                );
+                            }
+                        }
+                    );
+                }
+            }
+        );
+
+        socket.on(
+            "error",
+            (error) => {
+
+                console.error(
+                    "WebSocket error:",
+                    error
+                );
+            }
+        );
+    }
+);
+
+console.log(
+    "WebSocket server running on port 5001"
+);

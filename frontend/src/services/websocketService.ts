@@ -4,60 +4,140 @@ import type { Block } from "../types/document";
 export const ydoc = new Y.Doc();
 
 export const blocks =
-    ydoc.getMap<string>("blocks");
+    ydoc.getMap<Y.Text>("blocks");
+
+export const blockLocks =
+    ydoc.getMap<string>("blockLocks");
+
+export const userId =
+    crypto.randomUUID();
+
+let socket: WebSocket | null = null;
+
+let currentDocumentId: string | null = null;
+
+let removeYjsListener: (() => void) | null = null;
 
 export const connectToDocument = (
     documentId: string,
     documentBlocks: Block[]
 ): void => {
-    const socket = new WebSocket(
-        `ws://localhost:5001/document/${documentId}`
-    );
+
+    // If we are already connected to this document,
+    // do not create another connection.
+    if (
+        socket &&
+        currentDocumentId === documentId &&
+        socket.readyState === WebSocket.OPEN
+    ) {
+        console.log(
+            "Already connected to document:",
+            documentId
+        );
+
+        return;
+    }
+
+    // Close previous Yjs listener
+    if (removeYjsListener) {
+        removeYjsListener();
+        removeYjsListener = null;
+    }
+
+    // Close previous WebSocket
+    if (socket) {
+        socket.close();
+        socket = null;
+    }
+
+    currentDocumentId = documentId;
+
+    socket = new WebSocket(
+    `ws://localhost:5001/document/${documentId}?userId=${userId}`
+);
 
     const handleYjsUpdate = (
         update: Uint8Array,
         origin: unknown
     ): void => {
-        // Do not send remote updates back
+
+        // Don't send remote updates back
         // to the server.
         if (origin === "remote") {
             return;
         }
 
-        // Socket must be connected.
-        if (socket.readyState !== WebSocket.OPEN) {
+        if (
+            !socket ||
+            socket.readyState !== WebSocket.OPEN
+        ) {
             return;
         }
 
         const buffer = update.buffer.slice(
             update.byteOffset,
-            update.byteOffset + update.byteLength
+            update.byteOffset +
+            update.byteLength
         ) as ArrayBuffer;
 
         socket.send(buffer);
     };
 
-    // Listen for local Yjs changes.
     ydoc.on(
         "update",
         handleYjsUpdate
     );
+
+    removeYjsListener = () => {
+        ydoc.off(
+            "update",
+            handleYjsUpdate
+        );
+    };
 
     socket.onopen = () => {
         console.log(
             "Connected to document:",
             documentId
         );
-
-        documentBlocks.forEach((block) => {
-            blocks.set(
-                block._id,
-                block.content
-            );
-        });
     };
 
     socket.onmessage = async (event) => {
+
+        // Server control message
+        if (typeof event.data === "string") {
+
+            const message = JSON.parse(
+                event.data
+            );
+
+            if (
+                message.type ===
+                "initialize"
+            ) {
+                console.log(
+                    "Initializing document from MongoDB"
+                );
+
+                documentBlocks.forEach((block) => {
+                    const text = new Y.Text();
+
+                    text.insert(
+                        0,
+                        block.content
+                    );
+
+                    blocks.set(
+                        block._id,
+                        text
+                    );
+                });
+            }
+
+            return;
+        }
+
+        // Yjs binary update
         console.log(
             "Update received for document:",
             documentId
@@ -69,7 +149,6 @@ export const connectToDocument = (
         const update =
             new Uint8Array(data);
 
-        // Apply update as remote.
         Y.applyUpdate(
             ydoc,
             update,
@@ -83,11 +162,13 @@ export const connectToDocument = (
             documentId
         );
 
-        // Remove this connection's Yjs listener.
-        ydoc.off(
-            "update",
-            handleYjsUpdate
-        );
+        if (removeYjsListener) {
+            removeYjsListener();
+            removeYjsListener = null;
+        }
+
+        socket = null;
+        currentDocumentId = null;
     };
 
     socket.onerror = (error) => {
