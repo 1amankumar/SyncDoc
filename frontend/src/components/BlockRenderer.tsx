@@ -8,7 +8,7 @@ import type { Block } from "../types/document";
 import {
     blocks,
     blockLocks,
-    userId
+    getUserId
 } from "../services/websocketService";
 
 interface BlockRendererProps {
@@ -18,6 +18,7 @@ interface BlockRendererProps {
 function BlockRenderer({
     block
 }: BlockRendererProps) {
+    const userId = getUserId();
 
     const [content, setContent] = useState(
         block.content
@@ -30,56 +31,56 @@ function BlockRenderer({
     // Y.Text synchronization
     // --------------------------------
     // --------------------------------
-// Y.Text synchronization
-// --------------------------------
-useEffect(() => {
-    let sharedText = blocks.get(block._id);
+    // Y.Text synchronization
+    // --------------------------------
+    useEffect(() => {
+        let sharedText = blocks.get(block._id);
 
-    let textObserver:
-        (() => void) | null = null;
+        let textObserver:
+            (() => void) | null = null;
 
-    const attachToBlock = () => {
-        const text = blocks.get(block._id);
+        const attachToBlock = () => {
+            const text = blocks.get(block._id);
 
-        if (!text) {
-            return;
-        }
+            if (!text) {
+                return;
+            }
 
-        // Prevent attaching again to the same Y.Text
-        if (sharedText === text) {
-            return;
-        }
+            // Prevent attaching again to the same Y.Text
+            if (sharedText === text) {
+                return;
+            }
 
-        sharedText = text;
+            sharedText = text;
 
-        const updateContent = () => {
-            setContent(text.toString());
+            const updateContent = () => {
+                setContent(text.toString());
+            };
+
+            // Get current Y.Text content
+            updateContent();
+
+            // Listen for Y.Text changes
+            text.observe(updateContent);
+
+            textObserver = updateContent;
         };
 
-        // Get current Y.Text content
-        updateContent();
+        // Try immediately
+        attachToBlock();
 
-        // Listen for Y.Text changes
-        text.observe(updateContent);
+        // Watch the blocks map.
+        // This catches blocks.set(blockId, Y.Text)
+        blocks.observe(attachToBlock);
 
-        textObserver = updateContent;
-    };
+        return () => {
+            blocks.unobserve(attachToBlock);
 
-    // Try immediately
-    attachToBlock();
-
-    // Watch the blocks map.
-    // This catches blocks.set(blockId, Y.Text)
-    blocks.observe(attachToBlock);
-
-    return () => {
-        blocks.unobserve(attachToBlock);
-
-        if (sharedText && textObserver) {
-            sharedText.unobserve(textObserver);
-        }
-    };
-}, [block._id]);
+            if (sharedText && textObserver) {
+                sharedText.unobserve(textObserver);
+            }
+        };
+    }, [block._id]);
 
 
     // --------------------------------
@@ -122,7 +123,7 @@ useEffect(() => {
             );
         };
 
-    }, [block._id]);
+    }, [block._id, userId]);
 
 
     // --------------------------------
@@ -195,11 +196,68 @@ useEffect(() => {
     // --------------------------------
     // When user enters a block
     // --------------------------------
-   const handleFocus = () => {
-    const lockedBy = blockLocks.get(block._id);
+    const handleFocus = () => {
+        const lockedBy = blockLocks.get(block._id);
+
+        console.log(
+            "TEXTAREA FOCUS:",
+            block._id,
+            "lockedBy:",
+            lockedBy,
+            "myUserId:",
+            userId
+        );
+
+        // User ID is not available
+        if (!userId) {
+            console.error(
+                "USER ID NOT AVAILABLE"
+            );
+            return;
+        }
+
+        // Nobody owns the block
+        if (!lockedBy) {
+            blockLocks.set(
+                block._id,
+                userId
+            );
+
+            console.log(
+                "LOCK ACQUIRED:",
+                block._id
+            );
+
+            return;
+        }
+
+        // I already own the block
+        if (lockedBy === userId) {
+            console.log(
+                "LOCK ALREADY OWNED:",
+                block._id
+            );
+
+            return;
+        }
+
+        // Another user owns the block
+        console.log(
+            "BLOCK LOCKED BY ANOTHER USER:",
+            lockedBy
+        );
+    };
+
+    const handleBlur = () => {
+    if (!userId) {
+        return;
+    }
+
+    const lockedBy =
+        blockLocks.get(block._id);
 
     console.log(
-        "TEXTAREA FOCUS:",
+        "TEXTAREA BLUR:",
         block._id,
         "lockedBy:",
         lockedBy,
@@ -207,36 +265,15 @@ useEffect(() => {
         userId
     );
 
-    // Nobody owns the block
-    if (!lockedBy) {
-        blockLocks.set(
-            block._id,
-            userId
-        );
-
-        console.log(
-            "LOCK ACQUIRED:",
-            block._id
-        );
-
-        return;
-    }
-
-    // I already own the block
+    // Only remove the lock if I own it
     if (lockedBy === userId) {
+        blockLocks.delete(block._id);
+
         console.log(
-            "LOCK ALREADY OWNED:",
+            "LOCK RELEASED:",
             block._id
         );
-
-        return;
     }
-
-    // Another user owns the block
-    console.log(
-        "BLOCK LOCKED BY ANOTHER USER:",
-        lockedBy
-    );
 };
 
 
@@ -244,32 +281,34 @@ useEffect(() => {
     // Common textarea
     // --------------------------------
     const renderTextarea = () => {
-    return (
-        <div>
+        return (
+            <div>
 
-            {isLocked && (
-                <p>
-                    🔒 This block is being edited by another user
-                </p>
-            )}
-
-            {!isLocked &&
-                blockLocks.get(block._id) === userId && (
+                {isLocked && (
                     <p>
-                        ✏️ You are editing this block
+                        🔒 This block is being edited by another user
                     </p>
                 )}
 
-            <textarea
-                value={content}
-                onChange={handleChange}
-                readOnly={isLocked}
-                onFocus={handleFocus}
-            />
+                {!isLocked &&
+                    userId &&
+                    blockLocks.get(block._id) === userId && (
+                        <p>
+                            ✏️ You are editing this block
+                        </p>
+                    )}
 
-        </div>
-    );
-};
+                <textarea
+                    value={content}
+                    onChange={handleChange}
+                    readOnly={isLocked}
+                    onFocus={handleFocus}
+                    onBlur={handleBlur}
+                />
+
+            </div>
+        );
+    };
 
 
     // --------------------------------

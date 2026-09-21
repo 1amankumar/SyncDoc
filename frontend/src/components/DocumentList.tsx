@@ -2,9 +2,10 @@ import { useEffect, useState } from "react";
 import type { Document } from "../types/document";
 import { getDocuments } from "../services/documentService";
 import DocumentPage from "../pages/DocumentPage";
-import { connectToDocument } from "../services/websocketService";
+import { connectToDocument,setUserId } from "../services/websocketService";
 import LogoutButton from "../pages/Logout";
 import { useNavigate } from "react-router-dom";
+import { getCurrentUser } from "../services/authService";
 
 function DocumentList() {
     // Stores all documents received from the backend.
@@ -24,53 +25,42 @@ function DocumentList() {
     const navigate = useNavigate();
 
     useEffect(() => {
-        const loadDocuments = async () => {
-            try {
-                // Start loading before making the API request.
-                setLoading(true);
+    const loadDocuments = async () => {
+        try {
+            const user = await getCurrentUser();
 
-                // Clear any previous error before trying again.
-                setError(null);
+            setUserId(user._id);
 
-                // Get documents from the backend API.
-                const data = await getDocuments();
+            const documents = await getDocuments();
 
-                // Store the received documents in React state.
-                setDocuments(data);
-            } catch (error) {
+            setDocuments(documents);
+        } catch (error) {
+            console.error(
+                "Failed to load documents:",
+                error
+            );
 
-                console.error(
-                    "Failed to load documents:",
-                    error
-                );
+            if (
+                error instanceof Error &&
+                error.message === "UNAUTHORIZED"
+            ) {
+                navigate("/login", {
+                    replace: true
+                });
 
-                if (
-                    error instanceof Error &&
-                    error.message === "UNAUTHORIZED"
-                ) {
-
-                    navigate(
-                        "/login",
-                        {
-                            replace: true
-                        }
-                    );
-
-                    return;
-                }
-
-                setError(
-                    "Failed to load documents."
-                );
+                return;
             }
-            finally {
-                // Stop the loading state whether the request succeeds or fails.
-                setLoading(false);
-            }
-        };
 
-        loadDocuments();
-    }, []);
+            setError(
+                "Failed to load documents."
+            );
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    loadDocuments();
+}, [navigate]);
 
     return (
         <div>
