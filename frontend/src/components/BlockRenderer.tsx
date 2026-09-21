@@ -1,5 +1,6 @@
 import {
     useEffect,
+    useRef,
     useState
 } from "react";
 
@@ -25,6 +26,28 @@ function BlockRenderer({
 
     const [isLocked, setIsLocked] =
         useState(false);
+
+    // Stores the current cursor/selection range for this block.
+    // These values will later be used for collaborative cursor tracking.
+    const [selection, setSelection] = useState({
+        start: 0,
+        end: 0
+    });
+
+    // Keeps a reference to the textarea so we can control its cursor position.
+    const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+    // Restore the user's cursor/selection after the textarea value changes.
+    useEffect(() => {
+        if (!textareaRef.current) {
+            return;
+        }
+
+        textareaRef.current.setSelectionRange(
+        selection.start,
+        selection.end
+        );
+    }, [content, selection.start, selection.end]);
 
     // --------------------------------
     // Y.Text synchronization
@@ -134,6 +157,11 @@ useEffect(() => {
         const newContent =
             event.target.value;
 
+        // Save the cursor/selection position after the user edits the block.
+        setSelection({
+            start: event.target.selectionStart,
+            end: event.target.selectionEnd
+        });
         const sharedText =
             blocks.get(block._id);
 
@@ -244,6 +272,7 @@ useEffect(() => {
     // Common textarea
     // --------------------------------
     const renderTextarea = () => {
+        
     return (
         <div>
 
@@ -259,12 +288,22 @@ useEffect(() => {
                         ✏️ You are editing this block
                     </p>
                 )}
+            
+            
 
             <textarea
+                ref={textareaRef}
                 value={content}
                 onChange={handleChange}
                 readOnly={isLocked}
                 onFocus={handleFocus}
+                onSelect={(event) => {
+                    // Track the current cursor/selection positions.
+                     setSelection({
+                        start: event.currentTarget.selectionStart,
+                        end: event.currentTarget.selectionEnd
+                    });
+    }}
             />
 
         </div>
