@@ -9,21 +9,18 @@ export const getDocuments =
         const response = await fetch(
             API_URL,
             {
-                credentials: "include"
+                credentials: "include",
+                cache: "no-store"
             }
         );
 
         if (response.status === 401) {
-
-            throw new Error(
-                "UNAUTHORIZED"
-            );
+            throw new Error("UNAUTHORIZED");
         }
 
         if (!response.ok) {
-
             throw new Error(
-                "Failed to fetch documents"
+                `Failed to fetch documents: ${response.status}`
             );
         }
 
