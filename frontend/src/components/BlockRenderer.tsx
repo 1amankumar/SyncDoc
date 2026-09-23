@@ -32,6 +32,12 @@ function BlockRenderer({
 
     const [syncCompleted, setSyncCompleted] =
         useState(isSyncReady());
+
+    const [selection, setSelection] = useState({
+        start: 0,
+        end: 0
+    });
+
     const textareaRef =
         useRef<HTMLTextAreaElement | null>(null);
 
@@ -109,6 +115,23 @@ function BlockRenderer({
 
     useEffect(() => {
 
+        if (!textareaRef.current) {
+            return;
+        }
+
+        textareaRef.current.setSelectionRange(
+            selection.start,
+            selection.end
+        );
+
+    }, [
+        content,
+        selection.start,
+        selection.end
+    ]);
+
+    useEffect(() => {
+
         const updateLockState = () => {
 
             const lockedBy =
@@ -173,6 +196,11 @@ function BlockRenderer({
 
         const newContent =
             event.target.value;
+
+        setSelection({
+            start: event.target.selectionStart,
+            end: event.target.selectionEnd
+        });
 
         const sharedText =
             blocks.get(
@@ -242,9 +270,7 @@ function BlockRenderer({
     const handleFocus = () => {
 
         const lockedBy =
-            blockLocks.get(
-                block._id
-            );
+            blockLocks.get(block._id);
 
         console.log(
             "TEXTAREA FOCUS:",
@@ -386,6 +412,16 @@ function BlockRenderer({
                         isLocked
                     }
                     onFocus={handleFocus}
+                    onSelect={(event) => {
+
+                        setSelection({
+                            start:
+                                event.currentTarget.selectionStart,
+                            end:
+                                event.currentTarget.selectionEnd
+                        });
+
+                    }}
                 />
 
             </div>
