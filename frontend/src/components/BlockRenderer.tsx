@@ -1,5 +1,6 @@
 import {
     useEffect,
+    useRef,
     useState
 } from "react";
 
@@ -18,6 +19,7 @@ interface BlockRendererProps {
 function BlockRenderer({
     block
 }: BlockRendererProps) {
+
     const userId = getUserId();
 
     const [content, setContent] = useState(
@@ -27,20 +29,51 @@ function BlockRenderer({
     const [isLocked, setIsLocked] =
         useState(false);
 
-    // --------------------------------
-    // Y.Text synchronization
-    // --------------------------------
+    // Stores the current cursor/selection range for this block.
+    // These values will later be used for collaborative cursor tracking.
+    const [selection, setSelection] = useState({
+        start: 0,
+        end: 0
+    });
+
+    // Keeps a reference to the textarea so we can control its cursor position.
+    const textareaRef =
+        useRef<HTMLTextAreaElement | null>(null);
+
+    // Restore the user's cursor/selection after the textarea value changes.
+    useEffect(() => {
+
+        if (!textareaRef.current) {
+            return;
+        }
+
+        textareaRef.current.setSelectionRange(
+            selection.start,
+            selection.end
+        );
+
+    }, [
+        content,
+        selection.start,
+        selection.end
+    ]);
+
+
     // --------------------------------
     // Y.Text synchronization
     // --------------------------------
     useEffect(() => {
-        let sharedText = blocks.get(block._id);
+
+        let sharedText =
+            blocks.get(block._id);
 
         let textObserver:
             (() => void) | null = null;
 
         const attachToBlock = () => {
-            const text = blocks.get(block._id);
+
+            const text =
+                blocks.get(block._id);
 
             if (!text) {
                 return;
@@ -74,12 +107,21 @@ function BlockRenderer({
         blocks.observe(attachToBlock);
 
         return () => {
-            blocks.unobserve(attachToBlock);
 
-            if (sharedText && textObserver) {
-                sharedText.unobserve(textObserver);
+            blocks.unobserve(
+                attachToBlock
+            );
+
+            if (
+                sharedText &&
+                textObserver
+            ) {
+                sharedText.unobserve(
+                    textObserver
+                );
             }
         };
+
     }, [block._id]);
 
 
@@ -114,10 +156,13 @@ function BlockRenderer({
         updateLockState();
 
         // Listen for lock changes
-        blockLocks.observe(updateLockState);
+        blockLocks.observe(
+            updateLockState
+        );
 
         // Cleanup observer
         return () => {
+
             blockLocks.unobserve(
                 updateLockState
             );
@@ -132,8 +177,16 @@ function BlockRenderer({
     const handleChange = (
         event: React.ChangeEvent<HTMLTextAreaElement>
     ) => {
+
         const newContent =
             event.target.value;
+
+        // Save the cursor/selection position
+        // after the user edits the block.
+        setSelection({
+            start: event.target.selectionStart,
+            end: event.target.selectionEnd
+        });
 
         const sharedText =
             blocks.get(block._id);
@@ -150,13 +203,17 @@ function BlockRenderer({
         while (
             start < oldContent.length &&
             start < newContent.length &&
-            oldContent[start] === newContent[start]
+            oldContent[start] ===
+            newContent[start]
         ) {
             start++;
         }
 
-        let oldEnd = oldContent.length;
-        let newEnd = newContent.length;
+        let oldEnd =
+            oldContent.length;
+
+        let newEnd =
+            newContent.length;
 
         while (
             oldEnd > start &&
@@ -178,6 +235,7 @@ function BlockRenderer({
             );
 
         if (deleteLength > 0) {
+
             sharedText.delete(
                 start,
                 deleteLength
@@ -185,6 +243,7 @@ function BlockRenderer({
         }
 
         if (insertedText.length > 0) {
+
             sharedText.insert(
                 start,
                 insertedText
@@ -197,7 +256,9 @@ function BlockRenderer({
     // When user enters a block
     // --------------------------------
     const handleFocus = () => {
-        const lockedBy = blockLocks.get(block._id);
+
+        const lockedBy =
+            blockLocks.get(block._id);
 
         console.log(
             "TEXTAREA FOCUS:",
@@ -210,14 +271,17 @@ function BlockRenderer({
 
         // User ID is not available
         if (!userId) {
+
             console.error(
                 "USER ID NOT AVAILABLE"
             );
+
             return;
         }
 
         // Nobody owns the block
         if (!lockedBy) {
+
             blockLocks.set(
                 block._id,
                 userId
@@ -233,6 +297,7 @@ function BlockRenderer({
 
         // I already own the block
         if (lockedBy === userId) {
+
             console.log(
                 "LOCK ALREADY OWNED:",
                 block._id
@@ -248,39 +313,48 @@ function BlockRenderer({
         );
     };
 
+
+    // --------------------------------
+    // When user leaves a block
+    // --------------------------------
     const handleBlur = () => {
-    if (!userId) {
-        return;
-    }
 
-    const lockedBy =
-        blockLocks.get(block._id);
+        if (!userId) {
+            return;
+        }
 
-    console.log(
-        "TEXTAREA BLUR:",
-        block._id,
-        "lockedBy:",
-        lockedBy,
-        "myUserId:",
-        userId
-    );
-
-    // Only remove the lock if I own it
-    if (lockedBy === userId) {
-        blockLocks.delete(block._id);
+        const lockedBy =
+            blockLocks.get(block._id);
 
         console.log(
-            "LOCK RELEASED:",
-            block._id
+            "TEXTAREA BLUR:",
+            block._id,
+            "lockedBy:",
+            lockedBy,
+            "myUserId:",
+            userId
         );
-    }
-};
+
+        // Only remove the lock if I own it
+        if (lockedBy === userId) {
+
+            blockLocks.delete(
+                block._id
+            );
+
+            console.log(
+                "LOCK RELEASED:",
+                block._id
+            );
+        }
+    };
 
 
     // --------------------------------
     // Common textarea
     // --------------------------------
     const renderTextarea = () => {
+
         return (
             <div>
 
@@ -299,11 +373,22 @@ function BlockRenderer({
                     )}
 
                 <textarea
+                    ref={textareaRef}
                     value={content}
                     onChange={handleChange}
                     readOnly={isLocked}
                     onFocus={handleFocus}
                     onBlur={handleBlur}
+                    onSelect={(event) => {
+
+                        // Track the current cursor/selection positions.
+                        setSelection({
+                            start:
+                                event.currentTarget.selectionStart,
+                            end:
+                                event.currentTarget.selectionEnd
+                        });
+                    }}
                 />
 
             </div>
