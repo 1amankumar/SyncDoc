@@ -1,6 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import {
+    useEffect,
+    useState
+} from "react";
 
-import type { Block } from "../types/document";
+import type {
+    Block
+} from "../types/document";
 
 import {
     blocks,
@@ -11,202 +16,385 @@ import {
     requestBlockLock,
     releaseBlockLock
 } from "../services/websocketService";
+
+import {
+    useBlockContext
+} from "../context/BlockContext";
+
+import * as Y from "yjs";
+
+// ========================================
+// Props
+// ========================================
+
 interface BlockRendererProps {
     block: Block;
 }
 
-function BlockRenderer({
+// ========================================
+// Component
+// ========================================
+
+const BlockRenderer = ({
     block
-}: BlockRendererProps) {
+}: BlockRendererProps) => {
 
-    const userId = getUserId();
+    // ========================================
+    // Block Context
+    // ========================================
 
-    const [content, setContent] =
-        useState(block.content);
+    const {
+        activeBlockId,
+        cursorPosition,
+        selectionStart,
+        selectionEnd,
+        setActiveBlockId,
+        setCursorPosition,
+        setSelectionStart,
+        setSelectionEnd
+    } = useBlockContext();
 
-    const [isLocked, setIsLocked] =
-        useState(false);
+    // ========================================
+    // Local State
+    // ========================================
 
-    const [syncCompleted, setSyncCompleted] =
-        useState(isSyncReady());
+    const [
+        content,
+        setContent
+    ] = useState<string>(
+        block.content
+    );
 
-    const [selection, setSelection] = useState({
-        start: 0,
-        end: 0
-    });
+    const [
+        syncCompleted,
+        setSyncCompleted
+    ] = useState<boolean>(
+        isSyncReady()
+    );
 
-    const textareaRef =
-        useRef<HTMLTextAreaElement | null>(null);
+    // ========================================
+    // Lock State
+    // ========================================
+
+    const [
+        lockOwner,
+        setLockOwner
+    ] = useState<string | null>(
+        blockLocks.get(block._id) ?? null
+    );
+
+    // ========================================
+    // Current User
+    // ========================================
+
+    const currentUserId =
+        getUserId();
+
+    // ========================================
+    // Active Block
+    // ========================================
+
+    const isActive =
+        activeBlockId === block._id;
+
+    // ========================================
+    // Lock Status
+    // ========================================
+
+    const isLockedByAnotherUser =
+        Boolean(
+            lockOwner &&
+            lockOwner !== currentUserId
+        );
+
+    const isOwnedByCurrentUser =
+        Boolean(
+            lockOwner &&
+            lockOwner === currentUserId
+        );
+
+    // ========================================
+    // Yjs Text Synchronization
+    // ========================================
 
     useEffect(() => {
 
-        let sharedText =
-            blocks.get(block._id);
+        let currentText:
+            Y.Text | null = null;
 
-        let textObserver:
-            (() => void) | null = null;
+        // ----------------------------------------
+        // Handle Y.Text Changes
+        // ----------------------------------------
 
-        const attachToBlock = () => {
+        const handleTextChange = () => {
 
-            const text =
-                blocks.get(block._id);
-
-            if (!text) {
+            if (!currentText) {
                 return;
             }
 
-            if (sharedText === text) {
-                return;
-            }
-
-            sharedText = text;
-
-            const updateContent = () => {
-                setContent(text.toString());
-            };
-
-            updateContent();
-
-            text.observe(updateContent);
-
-            textObserver = updateContent;
+            setContent(
+                currentText.toString()
+            );
         };
 
-        attachToBlock();
+        // ----------------------------------------
+        // Attach Y.Text Observer
+        // ----------------------------------------
 
-        blocks.observe(attachToBlock);
+        const attachTextObserver = () => {
+
+            const sharedText =
+                blocks.get(block._id);
+
+            if (!sharedText) {
+                return;
+            }
+
+            // ----------------------------------------
+            // Remove Previous Observer
+            // ----------------------------------------
+
+            if (currentText) {
+
+                currentText.unobserve(
+                    handleTextChange
+                );
+            }
+
+            currentText =
+                sharedText;
+
+            // ----------------------------------------
+            // Set Current Content
+            // ----------------------------------------
+
+            setContent(
+                sharedText.toString()
+            );
+
+            // ----------------------------------------
+            // Observe Text Changes
+            // ----------------------------------------
+
+            sharedText.observe(
+                handleTextChange
+            );
+        };
+
+        // ----------------------------------------
+        // Observe Blocks Map
+        // ----------------------------------------
+
+        blocks.observe(
+            attachTextObserver
+        );
+
+        // ----------------------------------------
+        // Try Immediately
+        // ----------------------------------------
+
+        attachTextObserver();
+
+        // ----------------------------------------
+        // Cleanup
+        // ----------------------------------------
 
         return () => {
 
             blocks.unobserve(
-                attachToBlock
+                attachTextObserver
             );
 
-            if (
-                sharedText &&
-                textObserver
-            ) {
-                sharedText.unobserve(
-                    textObserver
+            if (currentText) {
+
+                currentText.unobserve(
+                    handleTextChange
                 );
             }
+
+            currentText = null;
         };
 
     }, [block._id]);
 
-    useEffect(() => {
-
-        if (isSyncReady()) {
-            setSyncCompleted(true);
-            return;
-        }
-
-        const cleanup =
-            onSyncReady(() => {
-                setSyncCompleted(true);
-            });
-
-        return cleanup;
-
-    }, []);
+    // ========================================
+    // Block Lock Synchronization
+    // ========================================
 
     useEffect(() => {
 
-        if (!textareaRef.current) {
-            return;
-        }
+        const updateLockOwner = () => {
 
-        textareaRef.current.setSelectionRange(
-            selection.start,
-            selection.end
-        );
-
-    }, [
-        content,
-        selection.start,
-        selection.end
-    ]);
-
-    useEffect(() => {
-
-        const updateLockState = () => {
-
-            const lockedBy =
+            const owner =
                 blockLocks.get(
                     block._id
-                );
+                ) ?? null;
 
-            const locked =
-                lockedBy !== undefined &&
-                lockedBy !== userId;
-
-            console.log(
-                "LOCK CHECK:",
-                "lockedBy:",
-                lockedBy,
-                "myUserId:",
-                userId,
-                "isLocked:",
-                locked
+            setLockOwner(
+                owner
             );
-
-            setIsLocked(locked);
         };
 
-        updateLockState();
+        // ----------------------------------------
+        // Initial State
+        // ----------------------------------------
+
+        updateLockOwner();
+
+        // ----------------------------------------
+        // Observe Lock Changes
+        // ----------------------------------------
 
         blockLocks.observe(
-            updateLockState
+            updateLockOwner
         );
+
+        // ----------------------------------------
+        // Cleanup
+        // ----------------------------------------
 
         return () => {
 
             blockLocks.unobserve(
-                updateLockState
+                updateLockOwner
             );
         };
 
-    }, [block._id, userId]);
+    }, [block._id]);
 
-    const handleChange = (
-        event:
-            React.ChangeEvent<HTMLTextAreaElement>
-    ) => {
+    // ========================================
+    // Sync Ready
+    // ========================================
+
+    useEffect(() => {
+
+        const removeListener =
+            onSyncReady(() => {
+
+                setSyncCompleted(
+                    true
+                );
+            });
+
+        return removeListener;
+
+    }, []);
+
+    // ========================================
+    // Handle Focus
+    // ========================================
+
+    const handleFocus = () => {
+
+        const userId =
+            getUserId();
+
         if (!userId) {
 
-            console.log(
-                "EDIT BLOCKED: user ID unavailable"
+            console.error(
+                "Cannot edit block: user ID is not available"
             );
 
             return;
         }
 
+        // ----------------------------------------
+        // Set Active Block
+        // ----------------------------------------
 
-        const lockedBy =
+        setActiveBlockId(
+            block._id
+        );
+
+        // ----------------------------------------
+        // Check Existing Lock
+        // ----------------------------------------
+
+        const existingOwner =
             blockLocks.get(
                 block._id
             );
 
+        // ----------------------------------------
+        // Another User Owns Lock
+        // ----------------------------------------
 
         if (
-            lockedBy !== userId
+            existingOwner &&
+            existingOwner !== userId
         ) {
 
-            console.log(
-                "EDIT BLOCKED: lock not owned by current user"
+            return;
+        }
+
+        // ----------------------------------------
+        // Already Owns Lock
+        // ----------------------------------------
+
+        if (
+            existingOwner === userId
+        ) {
+
+            return;
+        }
+
+        // ----------------------------------------
+        // Request Lock
+        // ----------------------------------------
+
+        requestBlockLock(
+            block._id
+        );
+    };
+
+    // ========================================
+    // Handle Change
+    // ========================================
+
+    const handleChange = (
+        event: React.ChangeEvent<
+            HTMLTextAreaElement
+        >
+    ) => {
+
+        const newContent =
+            event.target.value;
+
+        const userId =
+            getUserId();
+
+        if (!userId) {
+
+            console.error(
+                "Cannot edit block: user ID is not available"
             );
 
             return;
         }
 
+        // ----------------------------------------
+        // Verify Lock Ownership
+        // ----------------------------------------
 
-        const newContent =
-            event.target.value;
+        const existingOwner =
+            blockLocks.get(
+                block._id
+            );
 
-        setSelection({
-            start: event.target.selectionStart,
-            end: event.target.selectionEnd
-        });
+        if (
+            existingOwner !== userId
+        ) {
+
+            console.warn(
+                "Cannot edit block. Current user does not own the lock."
+            );
+
+            return;
+        }
+
+        // ----------------------------------------
+        // Get Y.Text
+        // ----------------------------------------
 
         const sharedText =
             blocks.get(
@@ -214,25 +402,32 @@ function BlockRenderer({
             );
 
         if (!sharedText) {
+
+            console.error(
+                "Y.Text not found for block:",
+                block._id
+            );
+
             return;
         }
 
-        const oldContent =
-            sharedText.toString();
+        // ----------------------------------------
+        // Calculate Difference
+        // ----------------------------------------
 
         let start = 0;
 
         while (
-            start < oldContent.length &&
+            start < content.length &&
             start < newContent.length &&
-            oldContent[start] ===
-            newContent[start]
+            content[start] ===
+                newContent[start]
         ) {
             start++;
         }
 
         let oldEnd =
-            oldContent.length;
+            content.length;
 
         let newEnd =
             newContent.length;
@@ -240,8 +435,8 @@ function BlockRenderer({
         while (
             oldEnd > start &&
             newEnd > start &&
-            oldContent[oldEnd - 1] ===
-            newContent[newEnd - 1]
+            content[oldEnd - 1] ===
+                newContent[newEnd - 1]
         ) {
             oldEnd--;
             newEnd--;
@@ -256,7 +451,13 @@ function BlockRenderer({
                 newEnd
             );
 
-        if (deleteLength > 0) {
+        // ----------------------------------------
+        // Update Y.Text
+        // ----------------------------------------
+
+        if (
+            deleteLength > 0
+        ) {
 
             sharedText.delete(
                 start,
@@ -264,214 +465,314 @@ function BlockRenderer({
             );
         }
 
-        if (insertedText.length > 0) {
+        if (
+            insertedText.length > 0
+        ) {
 
             sharedText.insert(
                 start,
                 insertedText
             );
         }
-    };
 
-    const handleFocus = () => {
+        // ----------------------------------------
+        // Update Local Content
+        // ----------------------------------------
 
-        const lockedBy =
-            blockLocks.get(
-                block._id
-            );
-
-
-        console.log(
-            "TEXTAREA FOCUS:",
-            block._id,
-            "lockedBy:",
-            lockedBy,
-            "myUserId:",
-            userId
+        setContent(
+            newContent
         );
 
+        // ----------------------------------------
+        // Update Cursor
+        // ----------------------------------------
+
+        setCursorPosition(
+            event.target.selectionStart
+        );
+
+        setSelectionStart(
+            event.target.selectionStart
+        );
+
+        setSelectionEnd(
+            event.target.selectionEnd
+        );
+    };
+
+    // ========================================
+    // Handle Selection
+    // ========================================
+
+    const handleSelect = (
+        event: React.SyntheticEvent<
+            HTMLTextAreaElement
+        >
+    ) => {
+
+        const textarea =
+            event.currentTarget;
+
+        setCursorPosition(
+            textarea.selectionStart
+        );
+
+        setSelectionStart(
+            textarea.selectionStart
+        );
+
+        setSelectionEnd(
+            textarea.selectionEnd
+        );
+    };
+
+    // ========================================
+    // Handle Click
+    // ========================================
+
+    const handleClick = (
+        event: React.MouseEvent<
+            HTMLTextAreaElement
+        >
+    ) => {
+
+        const textarea =
+            event.currentTarget;
+
+        setActiveBlockId(
+            block._id
+        );
+
+        setCursorPosition(
+            textarea.selectionStart
+        );
+
+        setSelectionStart(
+            textarea.selectionStart
+        );
+
+        setSelectionEnd(
+            textarea.selectionEnd
+        );
+    };
+
+    // ========================================
+    // Handle Unlock
+    // ========================================
+
+    const handleUnlock = () => {
+
+        const userId =
+            getUserId();
 
         if (!userId) {
-
-            console.error(
-                "USER ID NOT AVAILABLE"
-            );
-
             return;
         }
 
-
-        // --------------------------------
-        // Another user owns the block
-        // --------------------------------
+        // ----------------------------------------
+        // Verify Ownership
+        // ----------------------------------------
 
         if (
-            lockedBy &&
-            lockedBy !== userId
+            lockOwner !== userId
         ) {
 
-            console.log(
-                "BLOCK LOCKED BY ANOTHER USER:",
-                lockedBy
+            console.warn(
+                "Cannot unlock block. Current user does not own the lock."
             );
-
-            setIsLocked(true);
 
             return;
         }
 
+        // ----------------------------------------
+        // Request Unlock
+        // ----------------------------------------
 
-        // --------------------------------
-        // I already own the lock
-        // --------------------------------
-
-        if (
-            lockedBy === userId
-        ) {
-
-            console.log(
-                "LOCK ALREADY OWNED:",
-                block._id
-            );
-
-            setIsLocked(false);
-
-            return;
-        }
-
-
-        // --------------------------------
-        // Request lock from server
-        // --------------------------------
-
-        requestBlockLock(
+        releaseBlockLock(
             block._id
         );
     };
 
-
-
-    const renderTextarea = () => {
-
-        return (
-            <div>
-
-                {isLocked && (
-                    <p>
-                        🔒 This block is being edited
-                        by another user
-                    </p>
-                )}
-
-                {!isLocked &&
-                    blockLocks.get(
-                        block._id
-                    ) === userId && (
-                        <div>
-
-                            <p>
-                                ✏️ You are editing
-                                this block
-                            </p>
-
-                            <button
-                                onClick={() => {
-                                    releaseBlockLock(
-                                        block._id
-                                    );
-                                }}
-                            >
-                                Unlock Block
-                            </button>
-
-                        </div>
-                    )}
-
-                <textarea
-                    ref={textareaRef}
-                    value={content}
-                    onChange={handleChange}
-                    readOnly={
-                        !syncCompleted ||
-                        isLocked
-                    }
-                    onFocus={handleFocus}
-                    onSelect={(event) => {
-
-                        setSelection({
-                            start:
-                                event.currentTarget.selectionStart,
-                            end:
-                                event.currentTarget.selectionEnd
-                        });
-
-                    }}
-                />
-
-            </div>
-        );
-    };
-
-    if (
-        block.type === "heading"
-    ) {
-
-        return (
-            <div>
-
-                {renderTextarea()}
-
-                {block.children.map(
-                    (child) => (
-                        <BlockRenderer
-                            key={child._id}
-                            block={child}
-                        />
-                    )
-                )}
-
-            </div>
-        );
-    }
-
-    if (
-        block.type === "code"
-    ) {
-
-        return (
-            <div>
-
-                {renderTextarea()}
-
-                {block.children.map(
-                    (child) => (
-                        <BlockRenderer
-                            key={child._id}
-                            block={child}
-                        />
-                    )
-                )}
-
-            </div>
-        );
-    }
+    // ========================================
+    // Render
+    // ========================================
 
     return (
-        <div>
+        <div
+            style={{
+                marginBottom: "16px",
+                border:
+                    isActive
+                        ? "2px solid #4f46e5"
+                        : "1px solid #ddd",
+                borderRadius: "8px",
+                padding: "12px"
+            }}
+        >
 
-            {renderTextarea()}
+            {/* ========================================
+                Block Header
+            ======================================== */}
 
-            {block.children.map(
-                (child) => (
-                    <BlockRenderer
-                        key={child._id}
-                        block={child}
-                    />
-                )
+            <div
+                style={{
+                    display: "flex",
+                    justifyContent:
+                        "space-between",
+                    alignItems: "center",
+                    marginBottom: "8px"
+                }}
+            >
+
+                <span
+                    style={{
+                        fontSize: "12px",
+                        color: "#666"
+                    }}
+                >
+                    {block.type}
+                </span>
+
+                {/* ----------------------------------------
+                    Another User Lock
+                ---------------------------------------- */}
+
+                {isLockedByAnotherUser && (
+                    <span
+                        style={{
+                            fontSize: "12px",
+                            color: "#dc2626"
+                        }}
+                    >
+                        🔒 This block is being
+                        edited by another user
+                    </span>
+                )}
+
+                {/* ----------------------------------------
+                    Current User Lock
+                ---------------------------------------- */}
+
+                {isOwnedByCurrentUser && (
+                    <span
+                        style={{
+                            fontSize: "12px",
+                            color: "#16a34a"
+                        }}
+                    >
+                        ✏️ You are editing
+                        this block
+                    </span>
+                )}
+
+            </div>
+
+            {/* ========================================
+                Textarea
+            ======================================== */}
+
+            <textarea
+                value={content}
+                onChange={handleChange}
+                onFocus={handleFocus}
+                onClick={handleClick}
+                onSelect={handleSelect}
+                readOnly={
+                    !syncCompleted ||
+                    isLockedByAnotherUser
+                }
+                placeholder="Start writing..."
+                style={{
+                    width: "100%",
+                    minHeight: "100px",
+                    padding: "10px",
+                    resize: "vertical",
+                    borderRadius: "6px",
+                    border: "1px solid #ccc",
+                    outline: "none",
+                    fontFamily:
+                        block.type === "code"
+                            ? "monospace"
+                            : "inherit"
+                }}
+            />
+
+            {/* ========================================
+                Unlock Button
+            ======================================== */}
+
+            {isOwnedByCurrentUser && (
+                <div
+                    style={{
+                        marginTop: "8px"
+                    }}
+                >
+                    <button
+                        type="button"
+                        onClick={
+                            handleUnlock
+                        }
+                    >
+                        Unlock Block
+                    </button>
+                </div>
             )}
+
+            {/* ========================================
+                Debug Information
+            ======================================== */}
+
+            {isActive && (
+                <div
+                    style={{
+                        marginTop: "8px",
+                        fontSize: "11px",
+                        color: "#666"
+                    }}
+                >
+                    Cursor:{" "}
+                    {cursorPosition}
+
+                    {" | "}
+
+                    Selection:{" "}
+                    {selectionStart}
+                    {" - "}
+                    {selectionEnd}
+                </div>
+            )}
+
+            {/* ========================================
+                Child Blocks
+            ======================================== */}
+
+            {block.children &&
+                block.children.length > 0 && (
+                    <div
+                        style={{
+                            marginLeft:
+                                "20px",
+                            marginTop:
+                                "12px"
+                        }}
+                    >
+                        {block.children.map(
+                            (child) => (
+                                <BlockRenderer
+                                    key={
+                                        child._id
+                                    }
+                                    block={
+                                        child
+                                    }
+                                />
+                            )
+                        )}
+                    </div>
+                )}
 
         </div>
     );
-}
+};
 
 export default BlockRenderer;
