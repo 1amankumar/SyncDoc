@@ -1,8 +1,4 @@
-import {
-    useEffect,
-    useRef,
-    useState
-} from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { Block } from "../types/document";
 
@@ -11,9 +7,10 @@ import {
     blockLocks,
     getUserId,
     isSyncReady,
-    onSyncReady
+    onSyncReady,
+    requestBlockLock,
+    releaseBlockLock
 } from "../services/websocketService";
-
 interface BlockRendererProps {
     block: Block;
 }
@@ -175,16 +172,6 @@ function BlockRenderer({
         event:
             React.ChangeEvent<HTMLTextAreaElement>
     ) => {
-
-        if (isLocked) {
-
-            console.log(
-                "EDIT BLOCKED: block is locked by another user"
-            );
-
-            return;
-        }
-
         if (!userId) {
 
             console.log(
@@ -193,6 +180,25 @@ function BlockRenderer({
 
             return;
         }
+
+
+        const lockedBy =
+            blockLocks.get(
+                block._id
+            );
+
+
+        if (
+            lockedBy !== userId
+        ) {
+
+            console.log(
+                "EDIT BLOCKED: lock not owned by current user"
+            );
+
+            return;
+        }
+
 
         const newContent =
             event.target.value;
@@ -270,7 +276,10 @@ function BlockRenderer({
     const handleFocus = () => {
 
         const lockedBy =
-            blockLocks.get(block._id);
+            blockLocks.get(
+                block._id
+            );
+
 
         console.log(
             "TEXTAREA FOCUS:",
@@ -281,6 +290,7 @@ function BlockRenderer({
             userId
         );
 
+
         if (!userId) {
 
             console.error(
@@ -289,6 +299,11 @@ function BlockRenderer({
 
             return;
         }
+
+
+        // --------------------------------
+        // Another user owns the block
+        // --------------------------------
 
         if (
             lockedBy &&
@@ -305,6 +320,11 @@ function BlockRenderer({
             return;
         }
 
+
+        // --------------------------------
+        // I already own the lock
+        // --------------------------------
+
         if (
             lockedBy === userId
         ) {
@@ -319,67 +339,17 @@ function BlockRenderer({
             return;
         }
 
-        blockLocks.set(
-            block._id,
-            userId
-        );
 
-        setIsLocked(false);
+        // --------------------------------
+        // Request lock from server
+        // --------------------------------
 
-        console.log(
-            "LOCK ACQUIRED:",
+        requestBlockLock(
             block._id
         );
     };
 
-    useEffect(() => {
 
-        const handleOutsideClick = (
-            event: MouseEvent
-        ) => {
-
-            const target =
-                event.target as Node;
-
-            if (
-                textareaRef.current &&
-                textareaRef.current.contains(target)
-            ) {
-                return;
-            }
-
-            const lockedBy =
-                blockLocks.get(block._id);
-
-            if (
-                lockedBy === userId
-            ) {
-
-                blockLocks.delete(
-                    block._id
-                );
-
-                console.log(
-                    "LOCK RELEASED:",
-                    block._id
-                );
-            }
-        };
-
-        document.addEventListener(
-            "mousedown",
-            handleOutsideClick
-        );
-
-        return () => {
-
-            document.removeEventListener(
-                "mousedown",
-                handleOutsideClick
-            );
-        };
-
-    }, [block._id, userId]);
 
     const renderTextarea = () => {
 
@@ -397,10 +367,24 @@ function BlockRenderer({
                     blockLocks.get(
                         block._id
                     ) === userId && (
-                        <p>
-                            ✏️ You are editing
-                            this block
-                        </p>
+                        <div>
+
+                            <p>
+                                ✏️ You are editing
+                                this block
+                            </p>
+
+                            <button
+                                onClick={() => {
+                                    releaseBlockLock(
+                                        block._id
+                                    );
+                                }}
+                            >
+                                Unlock Block
+                            </button>
+
+                        </div>
                     )}
 
                 <textarea
