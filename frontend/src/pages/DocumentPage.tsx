@@ -1,21 +1,93 @@
-import type { Document } from "../types/document";
+import {
+    useState
+} from "react";
+
+import type {
+    Document,
+    Block
+} from "../types/document";
+
 import BlockRenderer from "../components/BlockRenderer";
+
+import {
+    useBlockContext
+} from "../context/BlockContext";
+
+// ========================================
+// Props
+// ========================================
 
 interface DocumentPageProps {
     document: Document;
 }
 
-function DocumentPage({ document }: DocumentPageProps) {
+// ========================================
+// Component
+// ========================================
+
+function DocumentPage({
+    document
+}: DocumentPageProps) {
+
+    // ========================================
+    // Block Context
+    // ========================================
+
+    const {
+        updateBlockContent
+    } = useBlockContext();
+
+    // ========================================
+    // Document AST State
+    // ========================================
+
+    const [
+        documentBlocks,
+        setDocumentBlocks
+    ] = useState<Block[]>(
+        document.blocks
+    );
+
+    // ========================================
+    // Update Specific AST Block
+    // ========================================
+
+    const handleBlockContentChange = (
+        blockId: string,
+        content: string
+    ) => {
+
+        setDocumentBlocks(
+            (currentBlocks) =>
+                updateBlockContent(
+                    currentBlocks,
+                    blockId,
+                    content
+                )
+        );
+    };
+
+    // ========================================
+    // Render
+    // ========================================
+
     return (
         <div>
-            <h2>{document.title}</h2>
+            <h2>
+                {document.title}
+            </h2>
 
-            {document.blocks.map((block) => (
-                <BlockRenderer
-                    key={block._id}
-                    block={block}
-                />
-            ))}
+            {documentBlocks.map(
+                (block) => (
+                    <BlockRenderer
+                        key={block._id}
+                        block={block}
+                        onBlockContentChange={
+                            handleBlockContentChange
+                        }
+                    />
+                )
+            )}
         </div>
     );
 }

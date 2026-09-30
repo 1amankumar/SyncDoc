@@ -29,6 +29,11 @@ import * as Y from "yjs";
 
 interface BlockRendererProps {
     block: Block;
+
+    onBlockContentChange: (
+        blockId: string,
+        content: string
+    ) => void;
 }
 
 // ========================================
@@ -36,7 +41,8 @@ interface BlockRendererProps {
 // ========================================
 
 const BlockRenderer = ({
-    block
+    block,
+    onBlockContentChange
 }: BlockRendererProps) => {
 
     // ========================================
@@ -80,7 +86,9 @@ const BlockRenderer = ({
         lockOwner,
         setLockOwner
     ] = useState<string | null>(
-        blockLocks.get(block._id) ?? null
+        blockLocks.get(
+            block._id
+        ) ?? null
     );
 
     // ========================================
@@ -132,8 +140,11 @@ const BlockRenderer = ({
                 return;
             }
 
+            const newContent =
+                currentText.toString();
+
             setContent(
-                currentText.toString()
+                newContent
             );
         };
 
@@ -144,7 +155,9 @@ const BlockRenderer = ({
         const attachTextObserver = () => {
 
             const sharedText =
-                blocks.get(block._id);
+                blocks.get(
+                    block._id
+                );
 
             if (!sharedText) {
                 return;
@@ -173,7 +186,7 @@ const BlockRenderer = ({
             );
 
             // ----------------------------------------
-            // Observe Text Changes
+            // Observe Changes
             // ----------------------------------------
 
             sharedText.observe(
@@ -363,6 +376,10 @@ const BlockRenderer = ({
         const userId =
             getUserId();
 
+        // ----------------------------------------
+        // Check Authentication
+        // ----------------------------------------
+
         if (!userId) {
 
             console.error(
@@ -411,9 +428,9 @@ const BlockRenderer = ({
             return;
         }
 
-        // ----------------------------------------
-        // Calculate Difference
-        // ----------------------------------------
+        // ========================================
+        // Calculate Text Difference
+        // ========================================
 
         let start = 0;
 
@@ -451,9 +468,9 @@ const BlockRenderer = ({
                 newEnd
             );
 
-        // ----------------------------------------
+        // ========================================
         // Update Y.Text
-        // ----------------------------------------
+        // ========================================
 
         if (
             deleteLength > 0
@@ -475,21 +492,34 @@ const BlockRenderer = ({
             );
         }
 
-        // ----------------------------------------
-        // Update Local Content
-        // ----------------------------------------
+        // ========================================
+        // Update Local React Content
+        // ========================================
 
         setContent(
             newContent
         );
 
-        // ----------------------------------------
+        // ========================================
+        // Update AST
+        // ========================================
+
+        onBlockContentChange(
+            block._id,
+            newContent
+        );
+
+        // ========================================
         // Update Cursor
-        // ----------------------------------------
+        // ========================================
 
         setCursorPosition(
             event.target.selectionStart
         );
+
+        // ========================================
+        // Update Selection
+        // ========================================
 
         setSelectionStart(
             event.target.selectionStart
@@ -764,6 +794,9 @@ const BlockRenderer = ({
                                     }
                                     block={
                                         child
+                                    }
+                                    onBlockContentChange={
+                                        onBlockContentChange
                                     }
                                 />
                             )
