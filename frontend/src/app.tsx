@@ -9,18 +9,19 @@ import Login from "./pages/Login";
 import Signup from "./pages/Signup";
 import DocumentList from "./components/DocumentList";
 import ProtectedRoute from "./components/ProtectedRoute";
+import AppLayout from "./components/AppLayout";
 
 function App() {
+
     return (
         <BrowserRouter>
 
-            <h1>SyncDoc</h1>
-
-            <p>
-                Collaborative Document Engine
-            </p>
-
             <Routes>
+
+                {/* ================================ */}
+                {/* Public Routes */}
+                {/* ================================ */}
+
                 <Route
                     path="/"
                     element={
@@ -31,7 +32,6 @@ function App() {
                     }
                 />
 
-                {/* Public */}
                 <Route
                     path="/login"
                     element={<Login />}
@@ -42,12 +42,19 @@ function App() {
                     element={<Signup />}
                 />
 
-                {/* Protected */}
+                {/* ================================ */}
+                {/* Protected Routes */}
+                {/* ================================ */}
+
                 <Route element={<ProtectedRoute />}>
 
                     <Route
                         path="/documents"
-                        element={<DocumentList />}
+                        element={
+                            <AppLayout>
+                                <DocumentList />
+                            </AppLayout>
+                        }
                     />
 
                 </Route>
