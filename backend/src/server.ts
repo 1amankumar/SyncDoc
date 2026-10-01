@@ -1,21 +1,29 @@
-import dotenv from "dotenv";
+import "dotenv/config";
+
 import "./websocket/websocketServer.js";
 import app from "./app";
 import connectDB from "./config/db";
-
-dotenv.config();
 
 const PORT = process.env.PORT || 5000;
 
 const startServer = async (): Promise<void> => {
     try {
+
         await connectDB();
 
         app.listen(PORT, () => {
-            console.log(`Server running on port ${PORT}`);
+            console.log(
+                `Server running on port ${PORT}`
+            );
         });
+
     } catch (error) {
-        console.error("Failed to start server:", error);
+
+        console.error(
+            "Failed to start server:",
+            error
+        );
+
         process.exit(1);
     }
 };

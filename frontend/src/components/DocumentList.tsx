@@ -525,20 +525,27 @@ function DocumentList() {
                                     document._id;
 
                                 return (
-                                    <button
-                                        key={
-                                            document._id
-                                        }
+                                    <div
+                                        key={document._id}
                                         onClick={() =>
-                                            handleOpenDocument(
-                                                document
-                                            )
+                                            handleOpenDocument(document)
                                         }
-                                        className={`group relative flex min-h-[210px] flex-col rounded-2xl border bg-white p-5 text-left shadow-sm transition hover:-translate-y-1 hover:shadow-md ${isSelected
-                                                ? "border-slate-900 ring-2 ring-slate-200"
-                                                : "border-slate-200"
+                                        role="button"
+                                        tabIndex={0}
+                                        onKeyDown={(event) => {
+                                            if (
+                                                event.key === "Enter" ||
+                                                event.key === " "
+                                            ) {
+                                                handleOpenDocument(document);
+                                            }
+                                        }}
+                                        className={`group relative flex min-h-[210px] cursor-pointer flex-col rounded-2xl border bg-white p-5 text-left shadow-sm transition hover:-translate-y-1 hover:shadow-md ${isSelected
+                                            ? "border-slate-900 ring-2 ring-slate-200"
+                                            : "border-slate-200"
                                             }`}
                                     >
+
 
                                         {/* Top row */}
 
@@ -617,7 +624,7 @@ function DocumentList() {
 
                                         </div>
 
-                                    </button>
+                                    </div>
                                 );
                             }
                         )}

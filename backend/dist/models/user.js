@@ -55,6 +55,11 @@ const userSchema = new mongoose_1.Schema({
         type: String,
         unique: true,
         sparse: true
+    },
+    authProvider: {
+        type: String,
+        enum: ["local", "google"],
+        default: "local"
     }
 }, {
     timestamps: true

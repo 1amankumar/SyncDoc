@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { loginWithGoogle } from "../services/googleAuthService";
 
 function Login() {
 
@@ -64,6 +65,29 @@ function Login() {
                 error instanceof Error
                     ? error.message
                     : "Login failed"
+            );
+        }
+    };
+
+    const handleGoogleLogin = async () => {
+
+        try {
+
+            await loginWithGoogle();
+
+            navigate("/documents");
+
+        } catch (error) {
+
+            console.error(
+                "Google login failed:",
+                error
+            );
+
+            alert(
+                error instanceof Error
+                    ? error.message
+                    : "Google login failed"
             );
         }
     };
@@ -176,6 +200,38 @@ function Login() {
                             </button>
 
                         </form>
+
+                        {/* Divider */}
+
+                        <div className="my-6 flex items-center">
+
+                            <div className="h-px flex-1 bg-slate-200"></div>
+
+                            <span className="px-3 text-xs font-medium uppercase tracking-wide text-slate-400">
+                                OR
+                            </span>
+
+                            <div className="h-px flex-1 bg-slate-200"></div>
+
+                        </div>
+
+                        {/* Google Login */}
+
+                        <button
+                            type="button"
+                            onClick={handleGoogleLogin}
+                            className="flex w-full items-center justify-center gap-3 rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 hover:shadow focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
+                        >
+
+                            {/* Google Icon */}
+
+                            <span className="text-lg font-bold">
+                                G
+                            </span>
+
+                            Continue with Google
+
+                        </button>
 
                         {/* Signup */}
 

@@ -7,7 +7,8 @@ export interface IUser extends MongoDocument {
     name: string;
     email: string;
     password?: string;
-    googleId?:string;
+    googleId?: string;
+    authProvider?: "local" | "google";
 }
 
 const userSchema = new Schema<IUser>(
@@ -26,7 +27,7 @@ const userSchema = new Schema<IUser>(
             trim: true
         },
 
-         password: {
+        password: {
             type: String,
             minlength: 6
         },
@@ -35,6 +36,12 @@ const userSchema = new Schema<IUser>(
             type: String,
             unique: true,
             sparse: true
+        },
+
+        authProvider: {
+            type: String,
+            enum: ["local", "google"],
+            default: "local"
         }
     },
     {

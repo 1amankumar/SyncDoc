@@ -1,11 +1,13 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { signupWithGoogle } from "../services/googleAuthService";
 
 function Signup() {
 
     const [name, setName] = useState("");
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
+
     const navigate = useNavigate();
 
     const handleSignup = async (
@@ -66,6 +68,31 @@ function Signup() {
                 error instanceof Error
                     ? error.message
                     : "Signup failed"
+            );
+        }
+    };
+
+    const handleGoogleSignup = async () => {
+
+        try {
+
+            await signupWithGoogle();
+
+            alert("Google signup successful");
+
+            navigate("/documents");
+
+        } catch (error) {
+
+            console.error(
+                "GOOGLE SIGNUP ERROR:",
+                error
+            );
+
+            alert(
+                error instanceof Error
+                    ? error.message
+                    : "Google signup failed"
             );
         }
     };
@@ -209,6 +236,36 @@ function Signup() {
                             </button>
 
                         </form>
+
+                        {/* Divider */}
+
+                        <div className="my-6 flex items-center">
+
+                            <div className="h-px flex-1 bg-slate-200" />
+
+                            <span className="px-3 text-xs font-medium uppercase tracking-wide text-slate-400">
+                                OR
+                            </span>
+
+                            <div className="h-px flex-1 bg-slate-200" />
+
+                        </div>
+
+                        {/* Google Signup */}
+
+                        <button
+                            type="button"
+                            onClick={handleGoogleSignup}
+                            className="flex w-full items-center justify-center gap-3 rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 hover:shadow focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
+                        >
+
+                            <span className="text-lg font-bold">
+                                G
+                            </span>
+
+                            Continue with Google
+
+                        </button>
 
                         {/* Login */}
 
