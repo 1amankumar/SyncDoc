@@ -5,6 +5,9 @@ import {
 
 import * as Y from "yjs";
 
+import {
+    sanitizeBlockContent
+} from "../services/sanitizationService.js";
 
 // ========================================
 // Yjs Documents
@@ -13,14 +16,12 @@ import * as Y from "yjs";
 const documents =
     new Map<string, Y.Doc>();
 
-
 // ========================================
 // Connected Clients
 // ========================================
 
 const clients =
     new Map<string, Set<WebSocket>>();
-
 
 // ========================================
 // WebSocket Server
@@ -30,7 +31,6 @@ const ws =
     new WebSocketServer({
         port: 5001
     });
-
 
 // ========================================
 // Client Connection
@@ -50,14 +50,11 @@ ws.on(
                 "http://localhost"
             );
 
-
         const documentId =
             url.pathname.split("/")[2];
 
-
         const userId =
             url.searchParams.get("userId");
-
 
         // --------------------------------
         // Validate connection
@@ -67,19 +64,15 @@ ws.on(
             !documentId ||
             !userId
         ) {
-
             socket.close();
-
             return;
         }
-
 
         console.log(
             "Client connected:",
             documentId,
             userId
         );
-
 
         // ========================================
         // Get or Create Yjs Document
@@ -88,23 +81,18 @@ ws.on(
         const isNewDocument =
             !documents.has(documentId);
 
-
         let ydoc =
             documents.get(documentId);
 
-
         if (!ydoc) {
-
             ydoc =
                 new Y.Doc();
-
 
             documents.set(
                 documentId,
                 ydoc
             );
         }
-
 
         // ========================================
         // Send Initial Document State
@@ -125,17 +113,14 @@ ws.on(
                     ydoc
                 );
 
-
             if (
                 currentState.length > 0
             ) {
-
                 socket.send(
                     currentState
                 );
             }
         }
-
 
         // ========================================
         // Add Client
@@ -144,12 +129,10 @@ ws.on(
         let documentClients =
             clients.get(documentId);
 
-
         if (!documentClients) {
 
             documentClients =
                 new Set<WebSocket>();
-
 
             clients.set(
                 documentId,
@@ -157,11 +140,9 @@ ws.on(
             );
         }
 
-
         documentClients.add(
             socket
         );
-
 
         // ========================================
         // Receive Messages
@@ -185,7 +166,6 @@ ws.on(
                         blockId?: string;
                     };
 
-
                     try {
 
                         controlMessage =
@@ -202,7 +182,6 @@ ws.on(
                         return;
                     }
 
-
                     // ====================================
                     // LOCK REQUEST
                     // ====================================
@@ -215,24 +194,19 @@ ws.on(
                         const blockId =
                             controlMessage.blockId;
 
-
                         if (!blockId) {
-
                             return;
                         }
-
 
                         const blockLocks =
                             ydoc!.getMap<string>(
                                 "blockLocks"
                             );
 
-
                         const currentOwner =
                             blockLocks.get(
                                 blockId
                             );
-
 
                         // --------------------------------
                         // Block already locked by another
@@ -259,7 +233,6 @@ ws.on(
                                 })
                             );
 
-
                             console.log(
                                 "LOCK DENIED:",
                                 blockId,
@@ -267,10 +240,8 @@ ws.on(
                                 currentOwner
                             );
 
-
                             return;
                         }
-
 
                         // --------------------------------
                         // User already owns this lock
@@ -296,7 +267,6 @@ ws.on(
                                 })
                             );
 
-
                             console.log(
                                 "LOCK ALREADY OWNED:",
                                 blockId,
@@ -304,10 +274,8 @@ ws.on(
                                 userId
                             );
 
-
                             return;
                         }
-
 
                         // --------------------------------
                         // Save state before lock
@@ -318,20 +286,20 @@ ws.on(
                                 ydoc!
                             );
 
-
                         // --------------------------------
                         // Acquire lock
                         // --------------------------------
 
-                        ydoc!.transact(() => {
+                        ydoc!.transact(
+                            () => {
 
-                            blockLocks.set(
-                                blockId,
-                                userId
-                            );
+                                blockLocks.set(
+                                    blockId,
+                                    userId
+                                );
 
-                        });
-
+                            }
+                        );
 
                         // --------------------------------
                         // Create lock update
@@ -342,7 +310,6 @@ ws.on(
                                 ydoc!,
                                 stateBefore
                             );
-
 
                         // --------------------------------
                         // Tell requester lock succeeded
@@ -363,7 +330,6 @@ ws.on(
                             })
                         );
 
-
                         // --------------------------------
                         // Broadcast lock update
                         // --------------------------------
@@ -383,12 +349,13 @@ ws.on(
                                         client.send(
                                             lockUpdate
                                         );
+
                                     }
 
                                 }
                             );
-                        }
 
+                        }
 
                         console.log(
                             "LOCK ACQUIRED:",
@@ -397,10 +364,8 @@ ws.on(
                             userId
                         );
 
-
                         return;
                     }
-
 
                     // ====================================
                     // UNLOCK REQUEST
@@ -414,24 +379,19 @@ ws.on(
                         const blockId =
                             controlMessage.blockId;
 
-
                         if (!blockId) {
-
                             return;
                         }
-
 
                         const blockLocks =
                             ydoc!.getMap<string>(
                                 "blockLocks"
                             );
 
-
                         const currentOwner =
                             blockLocks.get(
                                 blockId
                             );
-
 
                         // --------------------------------
                         // Only owner can unlock
@@ -454,7 +414,6 @@ ws.on(
                                 })
                             );
 
-
                             console.log(
                                 "UNLOCK DENIED:",
                                 blockId,
@@ -464,10 +423,8 @@ ws.on(
                                 userId
                             );
 
-
                             return;
                         }
-
 
                         // --------------------------------
                         // Save state before unlock
@@ -478,19 +435,19 @@ ws.on(
                                 ydoc!
                             );
 
-
                         // --------------------------------
                         // Release lock
                         // --------------------------------
 
-                        ydoc!.transact(() => {
+                        ydoc!.transact(
+                            () => {
 
-                            blockLocks.delete(
-                                blockId
-                            );
+                                blockLocks.delete(
+                                    blockId
+                                );
 
-                        });
-
+                            }
+                        );
 
                         // --------------------------------
                         // Create unlock update
@@ -501,7 +458,6 @@ ws.on(
                                 ydoc!,
                                 stateBefore
                             );
-
 
                         // --------------------------------
                         // Tell requester unlock succeeded
@@ -518,7 +474,6 @@ ws.on(
                                     true
                             })
                         );
-
 
                         // --------------------------------
                         // Broadcast unlock update
@@ -539,12 +494,13 @@ ws.on(
                                         client.send(
                                             unlockUpdate
                                         );
+
                                     }
 
                                 }
                             );
-                        }
 
+                        }
 
                         console.log(
                             "LOCK RELEASED:",
@@ -553,10 +509,8 @@ ws.on(
                             userId
                         );
 
-
                         return;
                     }
-
 
                     // --------------------------------
                     // Unknown control message
@@ -567,10 +521,8 @@ ws.on(
                         controlMessage
                     );
 
-
                     return;
                 }
-
 
                 // ====================================
                 // BINARY YJS UPDATE
@@ -581,15 +533,22 @@ ws.on(
                     documentId
                 );
 
-
                 const update =
                     new Uint8Array(
                         message as Buffer
                     );
 
+                // --------------------------------
+                // Save state before applying update
+                // --------------------------------
+
+                const stateBefore =
+                    Y.encodeStateVector(
+                        ydoc!
+                    );
 
                 // --------------------------------
-                // Apply update to server document
+                // Apply incoming Yjs update
                 // --------------------------------
 
                 Y.applyUpdate(
@@ -597,31 +556,121 @@ ws.on(
                     update
                 );
 
+                // ========================================
+                // Sanitize Collaborative Block Content
+                // ========================================
 
-                // --------------------------------
-                // Send update to other clients
-                // --------------------------------
+                const blocks =
+                    ydoc!.getMap<Y.Text>(
+                        "blocks"
+                    );
 
-                documentClients?.forEach(
-                    (client) => {
+                ydoc!.transact(
+                    () => {
 
-                        if (
-                            client !== socket &&
-                            client.readyState ===
-                            WebSocket.OPEN
-                        ) {
+                        blocks.forEach(
+                            (
+                                yText,
+                                blockId
+                            ) => {
 
-                            client.send(
-                                update
-                            );
-                        }
+                                // --------------------------------
+                                // Make sure this is a Y.Text
+                                // --------------------------------
+
+                                if (
+                                    !(yText instanceof Y.Text)
+                                ) {
+                                    return;
+                                }
+
+                                // --------------------------------
+                                // Get current block content
+                                // --------------------------------
+
+                                const currentContent =
+                                    yText.toString();
+
+                                // --------------------------------
+                                // Sanitize block content
+                                // --------------------------------
+
+                                const sanitizedContent =
+                                    sanitizeBlockContent(
+                                        currentContent
+                                    );
+
+                                // --------------------------------
+                                // Replace unsafe content
+                                // --------------------------------
+
+                                if (
+                                    currentContent !==
+                                    sanitizedContent
+                                ) {
+
+                                    yText.delete(
+                                        0,
+                                        yText.length
+                                    );
+
+                                    yText.insert(
+                                        0,
+                                        sanitizedContent
+                                    );
+
+                                    console.log(
+                                        "Sanitized block:",
+                                        blockId
+                                    );
+
+                                }
+
+                            }
+                        );
 
                     }
                 );
 
+                // --------------------------------
+                // Create final sanitized update
+                // --------------------------------
+
+                const sanitizedUpdate =
+                    Y.encodeStateAsUpdate(
+                        ydoc!,
+                        stateBefore
+                    );
+
+                // --------------------------------
+                // Broadcast final update
+                // --------------------------------
+
+                if (
+                    sanitizedUpdate.length > 0
+                ) {
+
+                    documentClients?.forEach(
+                        (client) => {
+
+                            if (
+                                client.readyState ===
+                                WebSocket.OPEN
+                            ) {
+
+                                client.send(
+                                    sanitizedUpdate
+                                );
+
+                            }
+
+                        }
+                    );
+
+                }
+
             }
         );
-
 
         // ========================================
         // Client Disconnected
@@ -637,7 +686,6 @@ ws.on(
                     userId
                 );
 
-
                 // --------------------------------
                 // Remove client
                 // --------------------------------
@@ -645,7 +693,6 @@ ws.on(
                 documentClients?.delete(
                     socket
                 );
-
 
                 // ====================================
                 // Remove all locks owned by this user
@@ -656,36 +703,36 @@ ws.on(
                         "blockLocks"
                     );
 
-
                 const stateBefore =
                     Y.encodeStateVector(
                         ydoc!
                     );
 
+                ydoc!.transact(
+                    () => {
 
-                ydoc!.transact(() => {
+                        blockLocks.forEach(
+                            (
+                                lockedBy,
+                                blockId
+                            ) => {
 
-                    blockLocks.forEach(
-                        (
-                            lockedBy,
-                            blockId
-                        ) => {
+                                if (
+                                    lockedBy ===
+                                    userId
+                                ) {
 
-                            if (
-                                lockedBy ===
-                                userId
-                            ) {
+                                    blockLocks.delete(
+                                        blockId
+                                    );
 
-                                blockLocks.delete(
-                                    blockId
-                                );
+                                }
+
                             }
+                        );
 
-                        }
-                    );
-
-                });
-
+                    }
+                );
 
                 // --------------------------------
                 // Create cleanup update
@@ -696,7 +743,6 @@ ws.on(
                         ydoc!,
                         stateBefore
                     );
-
 
                 // --------------------------------
                 // Broadcast cleanup
@@ -717,15 +763,16 @@ ws.on(
                                 client.send(
                                     lockCleanupUpdate
                                 );
+
                             }
 
                         }
                     );
+
                 }
 
             }
         );
-
 
         // ========================================
         // WebSocket Error
@@ -745,7 +792,6 @@ ws.on(
 
     }
 );
-
 
 // ========================================
 // Server Started

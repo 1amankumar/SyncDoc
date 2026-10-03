@@ -7,12 +7,14 @@ exports.exportDocument = exports.getDocuments = exports.createDocument = void 0;
 const Document_js_1 = __importDefault(require("../models/Document.js"));
 const transformationService_js_1 = require("../services/transformationService.js");
 const pdfService_js_1 = require("../services/pdfService.js");
+const sanitizationService_js_1 = require("../services/sanitizationService.js");
 const createDocument = async (req, res) => {
     try {
         const { title, blocks } = req.body;
+        const sanitizedBlocks = (0, sanitizationService_js_1.sanitizeBlockTree)(blocks || []);
         const document = await Document_js_1.default.create({
             title,
-            blocks
+            blocks: sanitizedBlocks
         });
         res.status(201).json(document);
     }

@@ -5,6 +5,10 @@ import {
 } from "../services/transformationService.js";
 import { generatePdf } from "../services/pdfService.js";
 
+import {
+    sanitizeBlockTree
+} from "../services/sanitizationService.js";
+
 export const createDocument = async (
     req: Request,
     res: Response
@@ -12,10 +16,13 @@ export const createDocument = async (
     try {
         const { title, blocks } = req.body;
 
-        const document = await DocumentModel.create({
-            title,
-            blocks
-        });
+const sanitizedBlocks =
+    sanitizeBlockTree(blocks || []);
+
+       const document = await DocumentModel.create({
+    title,
+    blocks: sanitizedBlocks
+});
 
         res.status(201).json(document);
 

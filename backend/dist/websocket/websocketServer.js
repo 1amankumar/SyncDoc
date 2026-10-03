@@ -35,6 +35,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 const ws_1 = require("ws");
 const Y = __importStar(require("yjs"));
+const sanitizationService_js_1 = require("../services/sanitizationService.js");
 // ========================================
 // Yjs Documents
 // ========================================
@@ -268,19 +269,59 @@ ws.on("connection", (socket, request) => {
         console.log("Yjs update received for document:", documentId);
         const update = new Uint8Array(message);
         // --------------------------------
-        // Apply update to server document
+        // Save state before applying update
+        // --------------------------------
+        const stateBefore = Y.encodeStateVector(ydoc);
+        // --------------------------------
+        // Apply incoming Yjs update
         // --------------------------------
         Y.applyUpdate(ydoc, update);
-        // --------------------------------
-        // Send update to other clients
-        // --------------------------------
-        documentClients?.forEach((client) => {
-            if (client !== socket &&
-                client.readyState ===
-                    ws_1.WebSocket.OPEN) {
-                client.send(update);
-            }
+        // ========================================
+        // Sanitize Collaborative Block Content
+        // ========================================
+        const blocks = ydoc.getMap("blocks");
+        ydoc.transact(() => {
+            blocks.forEach((yText, blockId) => {
+                // --------------------------------
+                // Make sure this is a Y.Text
+                // --------------------------------
+                if (!(yText instanceof Y.Text)) {
+                    return;
+                }
+                // --------------------------------
+                // Get current block content
+                // --------------------------------
+                const currentContent = yText.toString();
+                // --------------------------------
+                // Sanitize block content
+                // --------------------------------
+                const sanitizedContent = (0, sanitizationService_js_1.sanitizeBlockContent)(currentContent);
+                // --------------------------------
+                // Replace unsafe content
+                // --------------------------------
+                if (currentContent !==
+                    sanitizedContent) {
+                    yText.delete(0, yText.length);
+                    yText.insert(0, sanitizedContent);
+                    console.log("Sanitized block:", blockId);
+                }
+            });
         });
+        // --------------------------------
+        // Create final sanitized update
+        // --------------------------------
+        const sanitizedUpdate = Y.encodeStateAsUpdate(ydoc, stateBefore);
+        // --------------------------------
+        // Broadcast final update
+        // --------------------------------
+        if (sanitizedUpdate.length > 0) {
+            documentClients?.forEach((client) => {
+                if (client.readyState ===
+                    ws_1.WebSocket.OPEN) {
+                    client.send(sanitizedUpdate);
+                }
+            });
+        }
     });
     // ========================================
     // Client Disconnected
