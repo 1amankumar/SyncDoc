@@ -121,6 +121,47 @@ ws.on("connection", (socket, request) => {
                 return;
             }
             // ====================================
+            // CURSOR POSITION
+            // ====================================
+            if (controlMessage.type ===
+                "cursor") {
+                const { blockId, cursorPosition, selectionStart, selectionEnd } = controlMessage;
+                // --------------------------------
+                // Validate cursor message
+                // --------------------------------
+                if (!blockId ||
+                    typeof cursorPosition !==
+                        "number" ||
+                    typeof selectionStart !==
+                        "number" ||
+                    typeof selectionEnd !==
+                        "number") {
+                    return;
+                }
+                // --------------------------------
+                // Broadcast cursor to other users
+                // --------------------------------
+                documentClients?.forEach((client) => {
+                    // Do not send the cursor
+                    // back to its owner
+                    if (client === socket) {
+                        return;
+                    }
+                    if (client.readyState ===
+                        ws_1.WebSocket.OPEN) {
+                        client.send(JSON.stringify({
+                            type: "cursor",
+                            userId,
+                            blockId,
+                            cursorPosition,
+                            selectionStart,
+                            selectionEnd
+                        }));
+                    }
+                });
+                return;
+            }
+            // ====================================
             // LOCK REQUEST
             // ====================================
             if (controlMessage.type ===
@@ -332,6 +373,19 @@ ws.on("connection", (socket, request) => {
         // Remove client
         // --------------------------------
         documentClients?.delete(socket);
+        // ====================================
+        // Notify remaining users that
+        // this user's cursor disappeared
+        // ====================================
+        documentClients?.forEach((client) => {
+            if (client.readyState ===
+                ws_1.WebSocket.OPEN) {
+                client.send(JSON.stringify({
+                    type: "cursorRemoved",
+                    userId
+                }));
+            }
+        });
         // ====================================
         // Remove all locks owned by this user
         // ====================================

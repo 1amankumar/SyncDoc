@@ -14,7 +14,9 @@ import {
     isSyncReady,
     onSyncReady,
     requestBlockLock,
-    releaseBlockLock
+    releaseBlockLock,
+    getRemoteCursors,
+    sendCursorPosition
 } from "../services/websocketService";
 
 import {
@@ -92,6 +94,17 @@ const BlockRenderer = ({
     );
 
     // ========================================
+    // Remote Cursor State
+    // ========================================
+
+    const [
+        remoteCursors,
+        setRemoteCursors
+    ] = useState(
+        getRemoteCursors()
+    );
+
+    // ========================================
     // Current User
     // ========================================
 
@@ -122,6 +135,72 @@ const BlockRenderer = ({
         );
 
     // ========================================
+    // Remote Cursors For This Block
+    // ========================================
+
+    const blockRemoteCursors =
+        remoteCursors.filter(
+            (cursor) =>
+                cursor.blockId ===
+                block._id
+        );
+
+    // ========================================
+    // Remote Cursor Synchronization
+    // ========================================
+
+    useEffect(() => {
+
+        const handleCursorUpdate =
+            () => {
+
+                setRemoteCursors(
+                    getRemoteCursors()
+                );
+            };
+
+        window.addEventListener(
+            "syncdoc-cursor-update",
+            handleCursorUpdate
+        );
+
+        return () => {
+
+            window.removeEventListener(
+                "syncdoc-cursor-update",
+                handleCursorUpdate
+            );
+
+        };
+
+    }, []);
+
+    // ========================================
+    // Send Local Cursor Position
+    // ========================================
+
+    useEffect(() => {
+
+        if (!isActive) {
+            return;
+        }
+
+        sendCursorPosition(
+            block._id,
+            cursorPosition,
+            selectionStart,
+            selectionEnd
+        );
+
+    }, [
+        block._id,
+        isActive,
+        cursorPosition,
+        selectionStart,
+        selectionEnd
+    ]);
+
+    // ========================================
     // Yjs Text Synchronization
     // ========================================
 
@@ -134,65 +213,68 @@ const BlockRenderer = ({
         // Handle Y.Text Changes
         // ----------------------------------------
 
-        const handleTextChange = () => {
+        const handleTextChange =
+            () => {
 
-            if (!currentText) {
-                return;
-            }
+                if (!currentText) {
+                    return;
+                }
 
-            const newContent =
-                currentText.toString();
+                const newContent =
+                    currentText.toString();
 
-            setContent(
-                newContent
-            );
-        };
+                setContent(
+                    newContent
+                );
+            };
 
         // ----------------------------------------
         // Attach Y.Text Observer
         // ----------------------------------------
 
-        const attachTextObserver = () => {
+        const attachTextObserver =
+            () => {
 
-            const sharedText =
-                blocks.get(
-                    block._id
+                const sharedText =
+                    blocks.get(
+                        block._id
+                    );
+
+                if (!sharedText) {
+                    return;
+                }
+
+                // ----------------------------------------
+                // Remove Previous Observer
+                // ----------------------------------------
+
+                if (currentText) {
+
+                    currentText.unobserve(
+                        handleTextChange
+                    );
+
+                }
+
+                currentText =
+                    sharedText;
+
+                // ----------------------------------------
+                // Set Current Content
+                // ----------------------------------------
+
+                setContent(
+                    sharedText.toString()
                 );
 
-            if (!sharedText) {
-                return;
-            }
+                // ----------------------------------------
+                // Observe Changes
+                // ----------------------------------------
 
-            // ----------------------------------------
-            // Remove Previous Observer
-            // ----------------------------------------
-
-            if (currentText) {
-
-                currentText.unobserve(
+                sharedText.observe(
                     handleTextChange
                 );
-            }
-
-            currentText =
-                sharedText;
-
-            // ----------------------------------------
-            // Set Current Content
-            // ----------------------------------------
-
-            setContent(
-                sharedText.toString()
-            );
-
-            // ----------------------------------------
-            // Observe Changes
-            // ----------------------------------------
-
-            sharedText.observe(
-                handleTextChange
-            );
-        };
+            };
 
         // ----------------------------------------
         // Observe Blocks Map
@@ -223,6 +305,7 @@ const BlockRenderer = ({
                 currentText.unobserve(
                     handleTextChange
                 );
+
             }
 
             currentText = null;
@@ -236,17 +319,18 @@ const BlockRenderer = ({
 
     useEffect(() => {
 
-        const updateLockOwner = () => {
+        const updateLockOwner =
+            () => {
 
-            const owner =
-                blockLocks.get(
-                    block._id
-                ) ?? null;
+                const owner =
+                    blockLocks.get(
+                        block._id
+                    ) ?? null;
 
-            setLockOwner(
-                owner
-            );
-        };
+                setLockOwner(
+                    owner
+                );
+            };
 
         // ----------------------------------------
         // Initial State
@@ -271,6 +355,7 @@ const BlockRenderer = ({
             blockLocks.unobserve(
                 updateLockOwner
             );
+
         };
 
     }, [block._id]);
@@ -287,6 +372,7 @@ const BlockRenderer = ({
                 setSyncCompleted(
                     true
                 );
+
             });
 
         return removeListener;
@@ -624,6 +710,35 @@ const BlockRenderer = ({
     };
 
     // ========================================
+    // Visual Block State
+    // ========================================
+
+    const blockBackground =
+        isLockedByAnotherUser
+            ? "#fef2f2"
+            : isOwnedByCurrentUser
+                ? "#f0fdf4"
+                : isActive
+                    ? "#eef2ff"
+                    : "#ffffff";
+
+    const blockBorder =
+        isLockedByAnotherUser
+            ? "1px solid #fca5a5"
+            : isOwnedByCurrentUser
+                ? "2px solid #22c55e"
+                : isActive
+                    ? "2px solid #4f46e5"
+                    : "1px solid #e2e8f0";
+
+    const textareaBackground =
+        isLockedByAnotherUser
+            ? "#fff7f7"
+            : isOwnedByCurrentUser
+                ? "#f7fff9"
+                : "#ffffff";
+
+    // ========================================
     // Render
     // ========================================
 
@@ -631,18 +746,20 @@ const BlockRenderer = ({
         <div
             style={{
                 marginBottom: "16px",
+                background:
+                    blockBackground,
                 border:
-                    isActive
-                        ? "2px solid #4f46e5"
-                        : "1px solid #ddd",
-                borderRadius: "8px",
-                padding: "12px"
+                    blockBorder,
+                borderRadius: "10px",
+                padding: "14px",
+                transition:
+                    "border 0.2s ease, background 0.2s ease",
+                boxShadow: isActive
+                    ? "0 2px 8px rgba(79, 70, 229, 0.08)"
+                    : "none"
             }}
         >
-
-            {/* ========================================
-                Block Header
-            ======================================== */}
+            {/* Block Header */}
 
             <div
                 style={{
@@ -650,56 +767,199 @@ const BlockRenderer = ({
                     justifyContent:
                         "space-between",
                     alignItems: "center",
-                    marginBottom: "8px"
+                    gap: "12px",
+                    marginBottom: "10px"
                 }}
             >
+                {/* Block Type */}
 
                 <span
                     style={{
-                        fontSize: "12px",
-                        color: "#666"
+                        display:
+                            "inline-flex",
+                        alignItems:
+                            "center",
+                        padding:
+                            "4px 8px",
+                        borderRadius:
+                            "999px",
+                        background:
+                            "#f1f5f9",
+                        color:
+                            "#475569",
+                        fontSize:
+                            "11px",
+                        fontWeight: 600,
+                        textTransform:
+                            "uppercase"
                     }}
                 >
                     {block.type}
                 </span>
 
-                {/* ----------------------------------------
-                    Another User Lock
-                ---------------------------------------- */}
+                {/* Block Status */}
 
-                {isLockedByAnotherUser && (
-                    <span
-                        style={{
-                            fontSize: "12px",
-                            color: "#dc2626"
-                        }}
-                    >
-                        🔒 This block is being
-                        edited by another user
-                    </span>
-                )}
+                <div
+                    style={{
+                        display:
+                            "flex",
+                        alignItems:
+                            "center",
+                        gap: "8px"
+                    }}
+                >
+                    {isLockedByAnotherUser && (
+                        <span
+                            style={{
+                                display:
+                                    "inline-flex",
+                                alignItems:
+                                    "center",
+                                padding:
+                                    "5px 9px",
+                                borderRadius:
+                                    "999px",
+                                background:
+                                    "#fee2e2",
+                                color:
+                                    "#b91c1c",
+                                fontSize:
+                                    "11px",
+                                fontWeight: 600
+                            }}
+                        >
+                            🔒 Locked
+                        </span>
+                    )}
 
-                {/* ----------------------------------------
-                    Current User Lock
-                ---------------------------------------- */}
+                    {isOwnedByCurrentUser && (
+                        <span
+                            style={{
+                                display:
+                                    "inline-flex",
+                                alignItems:
+                                    "center",
+                                padding:
+                                    "5px 9px",
+                                borderRadius:
+                                    "999px",
+                                background:
+                                    "#dcfce7",
+                                color:
+                                    "#15803d",
+                                fontSize:
+                                    "11px",
+                                fontWeight: 600
+                            }}
+                        >
+                            ✏️ Editing
+                        </span>
+                    )}
 
-                {isOwnedByCurrentUser && (
-                    <span
-                        style={{
-                            fontSize: "12px",
-                            color: "#16a34a"
-                        }}
-                    >
-                        ✏️ You are editing
-                        this block
-                    </span>
-                )}
+                    {!isLockedByAnotherUser &&
+                        !isOwnedByCurrentUser &&
+                        isActive && (
+                            <span
+                                style={{
+                                    display:
+                                        "inline-flex",
+                                    alignItems:
+                                        "center",
+                                    padding:
+                                        "5px 9px",
+                                    borderRadius:
+                                        "999px",
+                                    background:
+                                        "#e0e7ff",
+                                    color:
+                                        "#4338ca",
+                                    fontSize:
+                                        "11px",
+                                    fontWeight: 600
+                                }}
+                            >
+                                ● Active
+                            </span>
+                        )}
 
+                    {syncCompleted && (
+                        <span
+                            style={{
+                                display:
+                                    "inline-flex",
+                                alignItems:
+                                    "center",
+                                padding:
+                                    "5px 9px",
+                                borderRadius:
+                                    "999px",
+                                background:
+                                    "#f0fdf4",
+                                color:
+                                    "#16a34a",
+                                fontSize:
+                                    "11px",
+                                fontWeight: 600
+                            }}
+                        >
+                            ✓ Synced
+                        </span>
+                    )}
+
+                    {!syncCompleted && (
+                        <span
+                            style={{
+                                display:
+                                    "inline-flex",
+                                alignItems:
+                                    "center",
+                                padding:
+                                    "5px 9px",
+                                borderRadius:
+                                    "999px",
+                                background:
+                                    "#fefce8",
+                                color:
+                                    "#a16207",
+                                fontSize:
+                                    "11px",
+                                fontWeight: 600
+                            }}
+                        >
+                            ⟳ Syncing...
+                        </span>
+                    )}
+                </div>
             </div>
 
-            {/* ========================================
-                Textarea
-            ======================================== */}
+            {/* Lock Information */}
+
+            {isLockedByAnotherUser && (
+                <div
+                    style={{
+                        marginBottom:
+                            "8px",
+                        padding:
+                            "8px 10px",
+                        borderRadius:
+                            "6px",
+                        background:
+                            "#fee2e2",
+                        color:
+                            "#991b1b",
+                        fontSize:
+                            "12px"
+                    }}
+                >
+                    🔒 This block is being
+                    edited by another user.
+                    You can still see live
+                    updates, but editing is
+                    temporarily disabled.
+                </div>
+            )}
+
+            {/* Block Editor */}
 
             <textarea
                 value={content}
@@ -717,24 +977,131 @@ const BlockRenderer = ({
                     minHeight: "100px",
                     padding: "10px",
                     resize: "vertical",
-                    borderRadius: "6px",
-                    border: "1px solid #ccc",
+                    borderRadius: "7px",
+                    border:
+                        isLockedByAnotherUser
+                            ? "1px solid #fca5a5"
+                            : isOwnedByCurrentUser
+                                ? "1px solid #86efac"
+                                : "1px solid #cbd5e1",
+                    background:
+                        textareaBackground,
+                    color: "#0f172a",
                     outline: "none",
+                    cursor:
+                        isLockedByAnotherUser
+                            ? "not-allowed"
+                            : "text",
                     fontFamily:
                         block.type === "code"
                             ? "monospace"
-                            : "inherit"
+                            : "inherit",
+                    lineHeight: "1.6"
                 }}
             />
 
-            {/* ========================================
-                Unlock Button
-            ======================================== */}
+            {/* Remote Cursor Indicators */}
+
+            {blockRemoteCursors.length >
+                0 && (
+                <div
+                    style={{
+                        marginTop:
+                            "8px",
+                        display:
+                            "flex",
+                        flexWrap:
+                            "wrap",
+                        gap: "6px"
+                    }}
+                >
+                    {blockRemoteCursors.map(
+                        (
+                            remoteCursor
+                        ) => (
+                            <div
+                                key={
+                                    remoteCursor.userId
+                                }
+                                style={{
+                                    display:
+                                        "inline-flex",
+                                    alignItems:
+                                        "center",
+                                    gap:
+                                        "5px",
+                                    padding:
+                                        "5px 9px",
+                                    borderRadius:
+                                        "999px",
+                                    background:
+                                        "#ede9fe",
+                                    color:
+                                        "#5b21b6",
+                                    fontSize:
+                                        "11px",
+                                    fontWeight: 600
+                                }}
+                            >
+                                <span>
+                                    ●
+                                </span>
+
+                                <span>
+                                    User{" "}
+                                    {remoteCursor.userId.slice(
+                                        0,
+                                        6
+                                    )}
+                                </span>
+
+                                <span
+                                    style={{
+                                        fontWeight:
+                                            400
+                                    }}
+                                >
+                                    Cursor{" "}
+                                    {
+                                        remoteCursor.cursorPosition
+                                    }
+                                </span>
+
+                                {remoteCursor.selectionStart !==
+                                    remoteCursor.selectionEnd && (
+                                    <span
+                                        style={{
+                                            fontWeight:
+                                                400
+                                        }}
+                                    >
+                                        Selection{" "}
+                                        {
+                                            remoteCursor.selectionStart
+                                        }
+                                        {" - "}
+                                        {
+                                            remoteCursor.selectionEnd
+                                        }
+                                    </span>
+                                )}
+                            </div>
+                        )
+                    )}
+                </div>
+            )}
+
+            {/* Unlock Button */}
 
             {isOwnedByCurrentUser && (
                 <div
                     style={{
-                        marginTop: "8px"
+                        marginTop:
+                            "10px",
+                        display:
+                            "flex",
+                        justifyContent:
+                            "flex-end"
                     }}
                 >
                     <button
@@ -742,29 +1109,51 @@ const BlockRenderer = ({
                         onClick={
                             handleUnlock
                         }
+                        style={{
+                            padding:
+                                "7px 12px",
+                            border:
+                                "1px solid #86efac",
+                            borderRadius:
+                                "6px",
+                            background:
+                                "#ffffff",
+                            color:
+                                "#15803d",
+                            fontSize:
+                                "12px",
+                            fontWeight: 600,
+                            cursor:
+                                "pointer"
+                        }}
                     >
-                        Unlock Block
+                        🔓 Unlock Block
                     </button>
                 </div>
             )}
 
-            {/* ========================================
-                Debug Information
-            ======================================== */}
+            {/* Local Cursor / Selection */}
 
             {isActive && (
                 <div
                     style={{
-                        marginTop: "8px",
-                        fontSize: "11px",
-                        color: "#666"
+                        marginTop:
+                            "8px",
+                        padding:
+                            "6px 8px",
+                        borderRadius:
+                            "5px",
+                        background:
+                            "#f8fafc",
+                        color:
+                            "#64748b",
+                        fontSize:
+                            "10px"
                     }}
                 >
-                    Cursor:{" "}
+                    Local cursor:{" "}
                     {cursorPosition}
-
                     {" | "}
-
                     Selection:{" "}
                     {selectionStart}
                     {" - "}
@@ -772,22 +1161,27 @@ const BlockRenderer = ({
                 </div>
             )}
 
-            {/* ========================================
-                Child Blocks
-            ======================================== */}
+            {/* Child Blocks */}
 
             {block.children &&
-                block.children.length > 0 && (
+                block.children.length >
+                    0 && (
                     <div
                         style={{
                             marginLeft:
                                 "20px",
                             marginTop:
-                                "12px"
+                                "12px",
+                            paddingLeft:
+                                "12px",
+                            borderLeft:
+                                "2px solid #e2e8f0"
                         }}
                     >
                         {block.children.map(
-                            (child) => (
+                            (
+                                child
+                            ) => (
                                 <BlockRenderer
                                     key={
                                         child._id
@@ -803,7 +1197,6 @@ const BlockRenderer = ({
                         )}
                     </div>
                 )}
-
         </div>
     );
 };

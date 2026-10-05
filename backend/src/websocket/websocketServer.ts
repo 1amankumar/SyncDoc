@@ -164,6 +164,9 @@ ws.on(
                     let controlMessage: {
                         type: string;
                         blockId?: string;
+                        cursorPosition?: number;
+                        selectionStart?: number;
+                        selectionEnd?: number;
                     };
 
                     try {
@@ -177,6 +180,82 @@ ws.on(
 
                         console.error(
                             "Invalid control message"
+                        );
+
+                        return;
+                    }
+
+                    // ====================================
+                    // CURSOR POSITION
+                    // ====================================
+
+                    if (
+                        controlMessage.type ===
+                        "cursor"
+                    ) {
+
+                        const {
+                            blockId,
+                            cursorPosition,
+                            selectionStart,
+                            selectionEnd
+                        } = controlMessage;
+
+                        // --------------------------------
+                        // Validate cursor message
+                        // --------------------------------
+
+                        if (
+                            !blockId ||
+                            typeof cursorPosition !==
+                                "number" ||
+                            typeof selectionStart !==
+                                "number" ||
+                            typeof selectionEnd !==
+                                "number"
+                        ) {
+                            return;
+                        }
+
+                        // --------------------------------
+                        // Broadcast cursor to other users
+                        // --------------------------------
+
+                        documentClients?.forEach(
+                            (client) => {
+
+                                // Do not send the cursor
+                                // back to its owner
+
+                                if (
+                                    client === socket
+                                ) {
+                                    return;
+                                }
+
+                                if (
+                                    client.readyState ===
+                                    WebSocket.OPEN
+                                ) {
+
+                                    client.send(
+                                        JSON.stringify({
+                                            type:
+                                                "cursor",
+
+                                            userId,
+
+                                            blockId,
+
+                                            cursorPosition,
+
+                                            selectionStart,
+
+                                            selectionEnd
+                                        })
+                                    );
+                                }
+                            }
                         );
 
                         return;
@@ -692,6 +771,33 @@ ws.on(
 
                 documentClients?.delete(
                     socket
+                );
+
+                // ====================================
+                // Notify remaining users that
+                // this user's cursor disappeared
+                // ====================================
+
+                documentClients?.forEach(
+                    (client) => {
+
+                        if (
+                            client.readyState ===
+                            WebSocket.OPEN
+                        ) {
+
+                            client.send(
+                                JSON.stringify({
+                                    type:
+                                        "cursorRemoved",
+
+                                    userId
+                                })
+                            );
+
+                        }
+
+                    }
                 );
 
                 // ====================================

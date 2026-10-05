@@ -2,6 +2,18 @@ import * as Y from "yjs";
 import type { Block } from "../types/document";
 
 // ========================================
+// Remote Cursor Type
+// ========================================
+
+export interface RemoteCursor {
+    userId: string;
+    blockId: string;
+    cursorPosition: number;
+    selectionStart: number;
+    selectionEnd: number;
+}
+
+// ========================================
 // Yjs document
 // ========================================
 
@@ -32,6 +44,31 @@ export const setUserId = (
 
 export const getUserId = (): string | null => {
     return userId;
+};
+
+// ========================================
+// Remote Cursor Presence
+// ========================================
+
+const remoteCursors = new Map<
+    string,
+    RemoteCursor
+>();
+
+export const getRemoteCursors = (): RemoteCursor[] => {
+    return Array.from(
+        remoteCursors.values()
+    );
+};
+
+const clearRemoteCursors = (): void => {
+    remoteCursors.clear();
+
+    window.dispatchEvent(
+        new CustomEvent(
+            "syncdoc-cursor-update"
+        )
+    );
 };
 
 // ========================================
@@ -162,6 +199,64 @@ export const releaseBlockLock = (
 };
 
 // ========================================
+// Send Cursor Position
+// ========================================
+
+export const sendCursorPosition = (
+    blockId: string,
+    cursorPosition: number,
+    selectionStart: number,
+    selectionEnd: number
+): boolean => {
+    if (
+        !socket ||
+        socket.readyState !== WebSocket.OPEN
+    ) {
+        return false;
+    }
+
+    if (!userId) {
+        return false;
+    }
+
+    socket.send(
+        JSON.stringify({
+            type: "cursor",
+            blockId,
+            cursorPosition,
+            selectionStart,
+            selectionEnd
+        })
+    );
+
+    return true;
+};
+
+// ========================================
+// Remove Remote Cursor
+// ========================================
+
+export const removeRemoteCursor = (
+    remoteUserId: string
+): void => {
+    if (
+        remoteCursors.has(
+            remoteUserId
+        )
+    ) {
+        remoteCursors.delete(
+            remoteUserId
+        );
+
+        window.dispatchEvent(
+            new CustomEvent(
+                "syncdoc-cursor-update"
+            )
+        );
+    }
+};
+
+// ========================================
 // Connect To Document
 // ========================================
 
@@ -175,6 +270,12 @@ export const connectToDocument = (
     // ------------------------------------
 
     syncReady = false;
+
+    // ------------------------------------
+    // Clear old remote cursors
+    // ------------------------------------
+
+    clearRemoteCursors();
 
     // ------------------------------------
     // Check authenticated user
@@ -352,6 +453,72 @@ export const connectToDocument = (
                         "Invalid WebSocket control message:",
                         error
                     );
+
+                    return;
+                }
+
+                // --------------------------------
+                // Remote cursor position
+                // --------------------------------
+
+                if (
+                    message.type ===
+                    "cursor"
+                ) {
+                    if (
+                        message.userId &&
+                        message.userId !== userId
+                    ) {
+                        remoteCursors.set(
+                            message.userId,
+                            {
+                                userId:
+                                    message.userId,
+
+                                blockId:
+                                    message.blockId,
+
+                                cursorPosition:
+                                    message.cursorPosition,
+
+                                selectionStart:
+                                    message.selectionStart,
+
+                                selectionEnd:
+                                    message.selectionEnd
+                            }
+                        );
+
+                        window.dispatchEvent(
+                            new CustomEvent(
+                                "syncdoc-cursor-update"
+                            )
+                        );
+
+                        console.log(
+                            "REMOTE CURSOR:",
+                            message
+                        );
+                    }
+
+                    return;
+                }
+
+                // --------------------------------
+                // Remote cursor removed
+                // --------------------------------
+
+                if (
+                    message.type ===
+                    "cursorRemoved"
+                ) {
+                    if (
+                        message.userId
+                    ) {
+                        removeRemoteCursor(
+                            message.userId
+                        );
+                    }
 
                     return;
                 }
@@ -537,6 +704,12 @@ export const connectToDocument = (
             removeYjsListener();
             removeYjsListener = null;
         }
+
+        // --------------------------------
+        // Clear remote cursors
+        // --------------------------------
+
+        clearRemoteCursors();
 
         // --------------------------------
         // Reset connection state
