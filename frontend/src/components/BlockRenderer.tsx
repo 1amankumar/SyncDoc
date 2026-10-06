@@ -31,7 +31,6 @@ import * as Y from "yjs";
 
 interface BlockRendererProps {
     block: Block;
-
     onBlockContentChange: (
         blockId: string,
         content: string
@@ -170,7 +169,6 @@ const BlockRenderer = ({
                 "syncdoc-cursor-update",
                 handleCursorUpdate
             );
-
         };
 
     }, []);
@@ -253,7 +251,6 @@ const BlockRenderer = ({
                     currentText.unobserve(
                         handleTextChange
                     );
-
                 }
 
                 currentText =
@@ -305,7 +302,6 @@ const BlockRenderer = ({
                 currentText.unobserve(
                     handleTextChange
                 );
-
             }
 
             currentText = null;
@@ -355,7 +351,6 @@ const BlockRenderer = ({
             blockLocks.unobserve(
                 updateLockOwner
             );
-
         };
 
     }, [block._id]);
@@ -372,7 +367,6 @@ const BlockRenderer = ({
                 setSyncCompleted(
                     true
                 );
-
             });
 
         return removeListener;
@@ -422,7 +416,6 @@ const BlockRenderer = ({
             existingOwner &&
             existingOwner !== userId
         ) {
-
             return;
         }
 
@@ -433,7 +426,6 @@ const BlockRenderer = ({
         if (
             existingOwner === userId
         ) {
-
             return;
         }
 
@@ -505,12 +497,6 @@ const BlockRenderer = ({
             );
 
         if (!sharedText) {
-
-            console.error(
-                "Y.Text not found for block:",
-                block._id
-            );
-
             return;
         }
 
@@ -746,10 +732,8 @@ const BlockRenderer = ({
         <div
             style={{
                 marginBottom: "16px",
-                background:
-                    blockBackground,
-                border:
-                    blockBorder,
+                background: blockBackground,
+                border: blockBorder,
                 borderRadius: "10px",
                 padding: "14px",
                 transition:
@@ -775,23 +759,15 @@ const BlockRenderer = ({
 
                 <span
                     style={{
-                        display:
-                            "inline-flex",
-                        alignItems:
-                            "center",
-                        padding:
-                            "4px 8px",
-                        borderRadius:
-                            "999px",
-                        background:
-                            "#f1f5f9",
-                        color:
-                            "#475569",
-                        fontSize:
-                            "11px",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        padding: "4px 8px",
+                        borderRadius: "999px",
+                        background: "#f1f5f9",
+                        color: "#475569",
+                        fontSize: "11px",
                         fontWeight: 600,
-                        textTransform:
-                            "uppercase"
+                        textTransform: "uppercase"
                     }}
                 >
                     {block.type}
@@ -801,10 +777,8 @@ const BlockRenderer = ({
 
                 <div
                     style={{
-                        display:
-                            "flex",
-                        alignItems:
-                            "center",
+                        display: "flex",
+                        alignItems: "center",
                         gap: "8px"
                     }}
                 >
@@ -937,18 +911,12 @@ const BlockRenderer = ({
             {isLockedByAnotherUser && (
                 <div
                     style={{
-                        marginBottom:
-                            "8px",
-                        padding:
-                            "8px 10px",
-                        borderRadius:
-                            "6px",
-                        background:
-                            "#fee2e2",
-                        color:
-                            "#991b1b",
-                        fontSize:
-                            "12px"
+                        marginBottom: "8px",
+                        padding: "8px 10px",
+                        borderRadius: "6px",
+                        background: "#fee2e2",
+                        color: "#991b1b",
+                        fontSize: "12px"
                     }}
                 >
                     🔒 This block is being
@@ -969,6 +937,7 @@ const BlockRenderer = ({
                 onSelect={handleSelect}
                 readOnly={
                     !syncCompleted ||
+                    !blocks.get(block._id) ||
                     isLockedByAnotherUser
                 }
                 placeholder="Start writing..."
@@ -1006,12 +975,9 @@ const BlockRenderer = ({
                 0 && (
                 <div
                     style={{
-                        marginTop:
-                            "8px",
-                        display:
-                            "flex",
-                        flexWrap:
-                            "wrap",
+                        marginTop: "8px",
+                        display: "flex",
+                        flexWrap: "wrap",
                         gap: "6px"
                     }}
                 >
@@ -1028,8 +994,7 @@ const BlockRenderer = ({
                                         "inline-flex",
                                     alignItems:
                                         "center",
-                                    gap:
-                                        "5px",
+                                    gap: "5px",
                                     padding:
                                         "5px 9px",
                                     borderRadius:
@@ -1057,8 +1022,7 @@ const BlockRenderer = ({
 
                                 <span
                                     style={{
-                                        fontWeight:
-                                            400
+                                        fontWeight: 400
                                     }}
                                 >
                                     Cursor{" "}
@@ -1096,10 +1060,8 @@ const BlockRenderer = ({
             {isOwnedByCurrentUser && (
                 <div
                     style={{
-                        marginTop:
-                            "10px",
-                        display:
-                            "flex",
+                        marginTop: "10px",
+                        display: "flex",
                         justifyContent:
                             "flex-end"
                     }}
@@ -1137,8 +1099,7 @@ const BlockRenderer = ({
             {isActive && (
                 <div
                     style={{
-                        marginTop:
-                            "8px",
+                        marginTop: "8px",
                         padding:
                             "6px 8px",
                         borderRadius:

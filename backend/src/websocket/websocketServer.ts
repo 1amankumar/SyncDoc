@@ -9,6 +9,10 @@ import {
     sanitizeBlockContent
 } from "../services/sanitizationService.js";
 
+import DocumentModel, {
+    IBlock
+} from "../models/Document.js";
+
 // ========================================
 // Yjs Documents
 // ========================================
@@ -22,6 +26,178 @@ const documents =
 
 const clients =
     new Map<string, Set<WebSocket>>();
+
+// ========================================
+// MongoDB Auto-Save
+// ========================================
+
+const saveTimers =
+    new Map<
+        string,
+        NodeJS.Timeout
+    >();
+
+const persistDocumentToMongoDB =
+    async (
+        documentId: string,
+        ydoc: Y.Doc
+    ): Promise<void> => {
+
+        try {
+
+            const blocks =
+                ydoc.getMap<Y.Text>(
+                    "blocks"
+                );
+
+            const blockTypes =
+                ydoc.getMap<string>(
+                    "blockTypes"
+                );
+
+            const blockOrder =
+                ydoc.getArray<string>(
+                    "blockOrder"
+                );
+
+            const orderedIds =
+                blockOrder.toArray();
+
+            const uniqueBlockIds =
+                Array.from(
+                    new Set(
+                        orderedIds
+                    )
+                );
+
+            const mongoBlocks:
+                IBlock[] = [];
+
+            for (
+                const blockId
+                of uniqueBlockIds
+            ) {
+
+                const yText =
+                    blocks.get(
+                        blockId
+                    );
+
+                if (
+                    !yText ||
+                    !(yText instanceof Y.Text)
+                ) {
+                    continue;
+                }
+
+                const blockType =
+                    blockTypes.get(
+                        blockId
+                    ) ||
+                    "paragraph";
+
+                const rawContent =
+                    yText.toString();
+
+                const content =
+                    sanitizeBlockContent(
+                        rawContent
+                    );
+
+                mongoBlocks.push({
+                    _id: blockId,
+                    type: blockType,
+                    content,
+                    children: []
+                });
+            }
+
+            const document =
+                await DocumentModel.findByIdAndUpdate(
+                    documentId,
+                    {
+                        $set: {
+                            blocks:
+                                mongoBlocks
+                        }
+                    },
+                    {
+                        new: true,
+                        runValidators: true
+                    }
+                );
+
+            if (!document) {
+
+                console.error(
+                    "DOCUMENT NOT FOUND:",
+                    documentId
+                );
+
+                return;
+            }
+
+            console.log(
+                "DOCUMENT AUTO-SAVED TO MONGODB:",
+                documentId
+            );
+
+            console.log(
+                "MONGODB BLOCK COUNT:",
+                mongoBlocks.length
+            );
+
+        } catch (error) {
+
+            console.error(
+                "FAILED TO AUTO-SAVE DOCUMENT:",
+                documentId
+            );
+
+            console.error(error);
+        }
+    };
+
+const scheduleDocumentSave =
+    (
+        documentId: string,
+        ydoc: Y.Doc
+    ): void => {
+
+        const existingTimer =
+            saveTimers.get(
+                documentId
+            );
+
+        if (existingTimer) {
+
+            clearTimeout(
+                existingTimer
+            );
+        }
+
+        const timer =
+            setTimeout(
+                async () => {
+
+                    saveTimers.delete(
+                        documentId
+                    );
+
+                    await persistDocumentToMongoDB(
+                        documentId,
+                        ydoc
+                    );
+
+                },
+                500
+            );
+
+        saveTimers.set(
+            documentId,
+            timer
+        );
+    };
 
 // ========================================
 // WebSocket Server
@@ -64,7 +240,9 @@ ws.on(
             !documentId ||
             !userId
         ) {
+
             socket.close();
+
             return;
         }
 
@@ -79,12 +257,17 @@ ws.on(
         // ========================================
 
         const isNewDocument =
-            !documents.has(documentId);
+            !documents.has(
+                documentId
+            );
 
         let ydoc =
-            documents.get(documentId);
+            documents.get(
+                documentId
+            );
 
         if (!ydoc) {
+
             ydoc =
                 new Y.Doc();
 
@@ -102,7 +285,8 @@ ws.on(
 
             socket.send(
                 JSON.stringify({
-                    type: "initialize"
+                    type:
+                        "initialize"
                 })
             );
 
@@ -116,6 +300,7 @@ ws.on(
             if (
                 currentState.length > 0
             ) {
+
                 socket.send(
                     currentState
                 );
@@ -127,7 +312,9 @@ ws.on(
         // ========================================
 
         let documentClients =
-            clients.get(documentId);
+            clients.get(
+                documentId
+            );
 
         if (!documentClients) {
 
@@ -186,82 +373,6 @@ ws.on(
                     }
 
                     // ====================================
-                    // CURSOR POSITION
-                    // ====================================
-
-                    if (
-                        controlMessage.type ===
-                        "cursor"
-                    ) {
-
-                        const {
-                            blockId,
-                            cursorPosition,
-                            selectionStart,
-                            selectionEnd
-                        } = controlMessage;
-
-                        // --------------------------------
-                        // Validate cursor message
-                        // --------------------------------
-
-                        if (
-                            !blockId ||
-                            typeof cursorPosition !==
-                                "number" ||
-                            typeof selectionStart !==
-                                "number" ||
-                            typeof selectionEnd !==
-                                "number"
-                        ) {
-                            return;
-                        }
-
-                        // --------------------------------
-                        // Broadcast cursor to other users
-                        // --------------------------------
-
-                        documentClients?.forEach(
-                            (client) => {
-
-                                // Do not send the cursor
-                                // back to its owner
-
-                                if (
-                                    client === socket
-                                ) {
-                                    return;
-                                }
-
-                                if (
-                                    client.readyState ===
-                                    WebSocket.OPEN
-                                ) {
-
-                                    client.send(
-                                        JSON.stringify({
-                                            type:
-                                                "cursor",
-
-                                            userId,
-
-                                            blockId,
-
-                                            cursorPosition,
-
-                                            selectionStart,
-
-                                            selectionEnd
-                                        })
-                                    );
-                                }
-                            }
-                        );
-
-                        return;
-                    }
-
-                    // ====================================
                     // LOCK REQUEST
                     // ====================================
 
@@ -294,7 +405,8 @@ ws.on(
 
                         if (
                             currentOwner &&
-                            currentOwner !== userId
+                            currentOwner !==
+                            userId
                         ) {
 
                             socket.send(
@@ -418,7 +530,9 @@ ws.on(
                         ) {
 
                             documentClients?.forEach(
-                                (client) => {
+                                (
+                                    client
+                                ) => {
 
                                     if (
                                         client.readyState ===
@@ -428,12 +542,9 @@ ws.on(
                                         client.send(
                                             lockUpdate
                                         );
-
                                     }
-
                                 }
                             );
-
                         }
 
                         console.log(
@@ -563,7 +674,9 @@ ws.on(
                         ) {
 
                             documentClients?.forEach(
-                                (client) => {
+                                (
+                                    client
+                                ) => {
 
                                     if (
                                         client.readyState ===
@@ -573,12 +686,9 @@ ws.on(
                                         client.send(
                                             unlockUpdate
                                         );
-
                                     }
-
                                 }
                             );
-
                         }
 
                         console.log(
@@ -591,9 +701,134 @@ ws.on(
                         return;
                     }
 
-                    // --------------------------------
-                    // Unknown control message
-                    // --------------------------------
+                    // ====================================
+                    // CURSOR POSITION
+                    // ====================================
+
+                    if (
+                        controlMessage.type ===
+                        "cursor"
+                    ) {
+
+                        const blockId =
+                            controlMessage.blockId;
+
+                        if (!blockId) {
+                            return;
+                        }
+
+                        // --------------------------------
+                        // Convert cursor values
+                        // --------------------------------
+
+                        const cursorPosition =
+                            Number(
+                                controlMessage.cursorPosition
+                            );
+
+                        const selectionStart =
+                            Number(
+                                controlMessage.selectionStart
+                            );
+
+                        const selectionEnd =
+                            Number(
+                                controlMessage.selectionEnd
+                            );
+
+                        // --------------------------------
+                        // Validate cursor values
+                        // --------------------------------
+
+                        if (
+                            !Number.isFinite(
+                                cursorPosition
+                            ) ||
+                            !Number.isFinite(
+                                selectionStart
+                            ) ||
+                            !Number.isFinite(
+                                selectionEnd
+                            )
+                        ) {
+
+                            console.error(
+                                "Invalid cursor position:",
+                                controlMessage
+                            );
+
+                            return;
+                        }
+
+                        // ====================================
+                        // Create Cursor Message
+                        // ====================================
+
+                        const cursorMessage =
+                            JSON.stringify({
+
+                                type:
+                                    "cursor",
+
+                                userId,
+
+                                blockId,
+
+                                cursorPosition,
+
+                                selectionStart,
+
+                                selectionEnd
+
+                            });
+
+                        // ====================================
+                        // Broadcast Cursor
+                        // ====================================
+
+                        documentClients?.forEach(
+                            (
+                                client
+                            ) => {
+
+                                // ----------------------------
+                                // Do not send cursor back to
+                                // the same user
+                                // ----------------------------
+
+                                if (
+                                    client ===
+                                    socket
+                                ) {
+
+                                    return;
+                                }
+
+                                if (
+                                    client.readyState ===
+                                    WebSocket.OPEN
+                                ) {
+
+                                    client.send(
+                                        cursorMessage
+                                    );
+                                }
+                            }
+                        );
+
+                        console.log(
+                            "CURSOR UPDATE:",
+                            userId,
+                            blockId,
+                            cursorPosition
+                        );
+
+                        return;
+                    }
+
+                    // ====================================
+                    // UNKNOWN CONTROL MESSAGE
+                    // ====================================
 
                     console.log(
                         "Unknown control message:",
@@ -660,18 +895,19 @@ ws.on(
                                 if (
                                     !(yText instanceof Y.Text)
                                 ) {
+
                                     return;
                                 }
 
                                 // --------------------------------
-                                // Get current block content
+                                // Get current content
                                 // --------------------------------
 
                                 const currentContent =
                                     yText.toString();
 
                                 // --------------------------------
-                                // Sanitize block content
+                                // Sanitize content
                                 // --------------------------------
 
                                 const sanitizedContent =
@@ -702,12 +938,9 @@ ws.on(
                                         "Sanitized block:",
                                         blockId
                                     );
-
                                 }
-
                             }
                         );
-
                     }
                 );
 
@@ -720,9 +953,13 @@ ws.on(
                         ydoc!,
                         stateBefore
                     );
+                scheduleDocumentSave(
+                    documentId,
+                    ydoc!
+                );
 
                 // --------------------------------
-                // Broadcast final update
+                // Broadcast update
                 // --------------------------------
 
                 if (
@@ -730,7 +967,9 @@ ws.on(
                 ) {
 
                     documentClients?.forEach(
-                        (client) => {
+                        (
+                            client
+                        ) => {
 
                             if (
                                 client.readyState ===
@@ -740,14 +979,10 @@ ws.on(
                                 client.send(
                                     sanitizedUpdate
                                 );
-
                             }
-
                         }
                     );
-
                 }
-
             }
         );
 
@@ -774,12 +1009,23 @@ ws.on(
                 );
 
                 // ====================================
-                // Notify remaining users that
-                // this user's cursor disappeared
+                // Remove remote cursor
                 // ====================================
 
+                const cursorRemovedMessage =
+                    JSON.stringify({
+
+                        type:
+                            "cursorRemoved",
+
+                        userId
+
+                    });
+
                 documentClients?.forEach(
-                    (client) => {
+                    (
+                        client
+                    ) => {
 
                         if (
                             client.readyState ===
@@ -787,16 +1033,9 @@ ws.on(
                         ) {
 
                             client.send(
-                                JSON.stringify({
-                                    type:
-                                        "cursorRemoved",
-
-                                    userId
-                                })
+                                cursorRemovedMessage
                             );
-
                         }
-
                     }
                 );
 
@@ -831,12 +1070,9 @@ ws.on(
                                     blockLocks.delete(
                                         blockId
                                     );
-
                                 }
-
                             }
                         );
-
                     }
                 );
 
@@ -859,7 +1095,9 @@ ws.on(
                 ) {
 
                     documentClients?.forEach(
-                        (client) => {
+                        (
+                            client
+                        ) => {
 
                             if (
                                 client.readyState ===
@@ -869,14 +1107,24 @@ ws.on(
                                 client.send(
                                     lockCleanupUpdate
                                 );
-
                             }
-
                         }
                     );
-
                 }
 
+                // ====================================
+                // Remove empty client collection
+                // ====================================
+
+                if (
+                    documentClients &&
+                    documentClients.size === 0
+                ) {
+
+                    clients.delete(
+                        documentId
+                    );
+                }
             }
         );
 
@@ -892,10 +1140,8 @@ ws.on(
                     "WebSocket error:",
                     error
                 );
-
             }
         );
-
     }
 );
 

@@ -1,39 +1,65 @@
 import * as Y from "yjs";
-import type { Block } from "../types/document";
+
+import type {
+    Block
+} from "../types/document";
+
+
 
 // ========================================
-// Remote Cursor Type
+// Yjs Document
 // ========================================
 
-export interface RemoteCursor {
-    userId: string;
-    blockId: string;
-    cursorPosition: number;
-    selectionStart: number;
-    selectionEnd: number;
-}
+export const ydoc =
+    new Y.Doc();
 
 // ========================================
-// Yjs document
+// Collaborative Blocks
 // ========================================
-
-export const ydoc = new Y.Doc();
 
 export const blocks =
-    ydoc.getMap<Y.Text>("blocks");
+    ydoc.getMap<Y.Text>(
+        "blocks"
+    );
+
+// ========================================
+// Block Locks
+// ========================================
 
 export const blockLocks =
-    ydoc.getMap<string>("blockLocks");
+    ydoc.getMap<string>(
+        "blockLocks"
+    );
+
+// ========================================
+// Block Order
+// ========================================
+
+export const blockOrder =
+    ydoc.getArray<string>(
+        "blockOrder"
+    );
+
+// ========================================
+// Block Types
+// ========================================
+
+export const blockTypes =
+    ydoc.getMap<Block["type"]>(
+        "blockTypes"
+    );
 
 // ========================================
 // Authenticated User ID
 // ========================================
 
-let userId: string | null = null;
+let userId:
+    string | null = null;
 
 export const setUserId = (
     id: string
 ): void => {
+
     userId = id;
 
     console.log(
@@ -42,58 +68,40 @@ export const setUserId = (
     );
 };
 
-export const getUserId = (): string | null => {
+export const getUserId = ():
+    string | null => {
+
     return userId;
 };
 
 // ========================================
-// Remote Cursor Presence
+// Sync Status
 // ========================================
 
-const remoteCursors = new Map<
-    string,
-    RemoteCursor
->();
+let syncReady =
+    false;
 
-export const getRemoteCursors = (): RemoteCursor[] => {
-    return Array.from(
-        remoteCursors.values()
-    );
-};
+export const isSyncReady = ():
+    boolean => {
 
-const clearRemoteCursors = (): void => {
-    remoteCursors.clear();
-
-    window.dispatchEvent(
-        new CustomEvent(
-            "syncdoc-cursor-update"
-        )
-    );
-};
-
-// ========================================
-// Yjs Sync Status
-// ========================================
-
-let syncReady = false;
-
-export const isSyncReady = (): boolean => {
     return syncReady;
 };
 
 // ========================================
-// Sync Ready Event
+// Sync Ready Listener
 // ========================================
 
 export const onSyncReady = (
     callback: () => void
 ) => {
+
     window.addEventListener(
         "syncdoc-ready",
         callback
     );
 
     return () => {
+
         window.removeEventListener(
             "syncdoc-ready",
             callback
@@ -108,10 +116,13 @@ export const onSyncReady = (
 const markSyncReady = (
     documentId: string
 ): void => {
+
     syncReady = true;
 
     window.dispatchEvent(
-        new Event("syncdoc-ready")
+        new Event(
+            "syncdoc-ready"
+        )
     );
 
     console.log(
@@ -124,7 +135,8 @@ const markSyncReady = (
 // WebSocket State
 // ========================================
 
-let socket: WebSocket | null = null;
+let socket:
+    WebSocket | null = null;
 
 let currentDocumentId:
     string | null = null;
@@ -133,16 +145,131 @@ let removeYjsListener:
     (() => void) | null = null;
 
 // ========================================
+// Remote Cursor
+// ========================================
+
+export interface RemoteCursor {
+
+    userId: string;
+
+    blockId: string;
+
+    cursorPosition: number;
+
+    selectionStart: number;
+
+    selectionEnd: number;
+}
+
+const remoteCursors =
+    new Map<
+        string,
+        RemoteCursor
+    >();
+
+// ========================================
+// Get Remote Cursors
+// ========================================
+
+export const getRemoteCursors =
+    (): RemoteCursor[] => {
+
+        return Array.from(
+            remoteCursors.values()
+        );
+    };
+
+// ========================================
+// Clear Remote Cursors
+// ========================================
+
+const clearRemoteCursors =
+    (): void => {
+
+        remoteCursors.clear();
+
+        window.dispatchEvent(
+            new Event(
+                "syncdoc-cursor-update"
+            )
+        );
+    };
+
+// ========================================
+// Send Cursor Position
+// ========================================
+
+export const sendCursorPosition = (
+    blockId: string,
+    cursorPosition: number,
+    selectionStart: number,
+    selectionEnd: number
+): boolean => {
+
+    if (
+        !socket ||
+        socket.readyState !==
+            WebSocket.OPEN
+    ) {
+
+        return false;
+    }
+
+    if (!userId) {
+
+        return false;
+    }
+
+    socket.send(
+        JSON.stringify({
+            type: "cursor",
+
+            blockId,
+
+            cursorPosition,
+
+            selectionStart,
+
+            selectionEnd
+        })
+    );
+
+    return true;
+};
+
+// ========================================
+// Remove Remote Cursor
+// ========================================
+
+export const removeRemoteCursor = (
+    remoteUserId: string
+): void => {
+
+    remoteCursors.delete(
+        remoteUserId
+    );
+
+    window.dispatchEvent(
+        new Event(
+            "syncdoc-cursor-update"
+        )
+    );
+};
+
+// ========================================
 // Request Block Lock
 // ========================================
 
 export const requestBlockLock = (
     blockId: string
 ): boolean => {
+
     if (
         !socket ||
-        socket.readyState !== WebSocket.OPEN
+        socket.readyState !==
+            WebSocket.OPEN
     ) {
+
         console.error(
             "Cannot request lock: WebSocket is not connected"
         );
@@ -172,10 +299,13 @@ export const requestBlockLock = (
 export const releaseBlockLock = (
     blockId: string
 ): boolean => {
+
     if (
         !socket ||
-        socket.readyState !== WebSocket.OPEN
+        socket.readyState !==
+            WebSocket.OPEN
     ) {
+
         console.error(
             "Cannot release lock: WebSocket is not connected"
         );
@@ -199,61 +329,194 @@ export const releaseBlockLock = (
 };
 
 // ========================================
-// Send Cursor Position
+// Add Collaborative Block
 // ========================================
 
-export const sendCursorPosition = (
-    blockId: string,
-    cursorPosition: number,
-    selectionStart: number,
-    selectionEnd: number
-): boolean => {
-    if (
-        !socket ||
-        socket.readyState !== WebSocket.OPEN
-    ) {
-        return false;
-    }
+export const addBlock = (
+    type: Block["type"]
+): string | null => {
+
+    // ========================================
+    // Check User
+    // ========================================
 
     if (!userId) {
-        return false;
+
+        console.error(
+            "Cannot add block: user ID unavailable"
+        );
+
+        return null;
     }
 
-    socket.send(
-        JSON.stringify({
-            type: "cursor",
-            blockId,
-            cursorPosition,
-            selectionStart,
-            selectionEnd
-        })
+    // ========================================
+    // Check WebSocket
+    // ========================================
+
+    if (
+        !socket ||
+        socket.readyState !==
+            WebSocket.OPEN
+    ) {
+
+        console.error(
+            "Cannot add block: WebSocket is not connected"
+        );
+
+        return null;
+    }
+
+    // ========================================
+    // Check Sync
+    // ========================================
+
+    if (!syncReady) {
+
+        console.error(
+            "Cannot add block: document is not synchronized"
+        );
+
+        return null;
+    }
+
+    // ========================================
+    // Generate Block ID
+    // ========================================
+
+    const blockId =
+        crypto.randomUUID();
+
+    // ========================================
+    // Create Y.Text
+    // ========================================
+
+    const text =
+        new Y.Text();
+
+    // ========================================
+    // Add Block To Yjs
+    // ========================================
+
+    blocks.set(
+        blockId,
+        text
     );
 
-    return true;
+    // ========================================
+    // Store Block Type
+    // ========================================
+
+    blockTypes.set(
+        blockId,
+        type
+    );
+
+    // ========================================
+    // Store Block Order
+    // ========================================
+
+    blockOrder.push([
+        blockId
+    ]);
+
+    // ========================================
+    // Log
+    // ========================================
+
+    console.log(
+        "BLOCK ADDED:",
+        blockId,
+        type
+    );
+
+    return blockId;
 };
 
 // ========================================
-// Remove Remote Cursor
+// Clean Block Order
 // ========================================
 
-export const removeRemoteCursor = (
-    remoteUserId: string
-): void => {
-    if (
-        remoteCursors.has(
-            remoteUserId
-        )
-    ) {
-        remoteCursors.delete(
-            remoteUserId
+const cleanBlockOrder =
+    (): void => {
+
+        const currentOrder =
+            blockOrder.toArray();
+
+        // ------------------------------------
+        // Remove duplicate IDs
+        // ------------------------------------
+
+        const uniqueOrder =
+            Array.from(
+                new Set(
+                    currentOrder
+                )
+            );
+
+        // ------------------------------------
+        // Nothing to clean
+        // ------------------------------------
+
+        if (
+            uniqueOrder.length ===
+            currentOrder.length
+        ) {
+
+            return;
+        }
+
+        // ------------------------------------
+        // Rebuild Yjs order
+        // ------------------------------------
+
+        blockOrder.delete(
+            0,
+            blockOrder.length
         );
 
-        window.dispatchEvent(
-            new CustomEvent(
-                "syncdoc-cursor-update"
-            )
+        if (
+            uniqueOrder.length > 0
+        ) {
+
+            blockOrder.push(
+                uniqueOrder
+            );
+        }
+
+        console.log(
+            "DUPLICATE BLOCK ORDER CLEANED:",
+            uniqueOrder
         );
+    };
+
+// ========================================
+// Ensure Block Is In Order
+// ========================================
+
+const ensureBlockInOrder = (
+    blockId: string
+): void => {
+
+    const currentOrder =
+        blockOrder.toArray();
+
+    if (
+        currentOrder.includes(
+            blockId
+        )
+    ) {
+
+        return;
     }
+
+    blockOrder.push([
+        blockId
+    ]);
+
+    console.log(
+        "BLOCK ORDER RESTORED:",
+        blockId
+    );
 };
 
 // ========================================
@@ -265,39 +528,37 @@ export const connectToDocument = (
     documentBlocks: Block[]
 ): void => {
 
-    // ------------------------------------
-    // Reset sync status
-    // ------------------------------------
+    // ========================================
+    // Reset Sync
+    // ========================================
 
     syncReady = false;
 
-    // ------------------------------------
-    // Clear old remote cursors
-    // ------------------------------------
-
-    clearRemoteCursors();
-
-    // ------------------------------------
-    // Check authenticated user
-    // ------------------------------------
+    // ========================================
+    // Check User
+    // ========================================
 
     if (!userId) {
+
         console.error(
-            "Cannot connect: user ID is not available"
+            "Cannot connect: user ID unavailable"
         );
 
         return;
     }
 
-    // ------------------------------------
-    // Already connected
-    // ------------------------------------
+    // ========================================
+    // Already Connected
+    // ========================================
 
     if (
         socket &&
-        currentDocumentId === documentId &&
-        socket.readyState === WebSocket.OPEN
+        currentDocumentId ===
+            documentId &&
+        socket.readyState ===
+            WebSocket.OPEN
     ) {
+
         console.log(
             "Already connected to document:",
             documentId
@@ -306,47 +567,69 @@ export const connectToDocument = (
         return;
     }
 
-    // ------------------------------------
-    // Remove previous Yjs listener
-    // ------------------------------------
+    // ========================================
+    // Remove Previous Yjs Listener
+    // ========================================
 
-    if (removeYjsListener) {
+    if (
+        removeYjsListener
+    ) {
+
         removeYjsListener();
-        removeYjsListener = null;
+
+        removeYjsListener =
+            null;
     }
 
-    // ------------------------------------
-    // Save previous socket
-    // ------------------------------------
+    // ========================================
+    // Close Previous Socket
+    // ========================================
 
-    const previousSocket = socket;
+    const previousSocket =
+        socket;
 
-    // ------------------------------------
-    // Close previous socket
-    // ------------------------------------
+    if (
+        previousSocket
+    ) {
 
-    if (previousSocket) {
         previousSocket.close();
     }
 
-    // ------------------------------------
-    // Create new WebSocket
-    // ------------------------------------
+    // ========================================
+    // Clear Previous Document State
+    // ========================================
 
-    const newSocket = new WebSocket(
-        `ws://localhost:5001/document/${documentId}?userId=${userId}`
+    blocks.clear();
+
+    blockLocks.clear();
+
+    blockOrder.delete(
+        0,
+        blockOrder.length
     );
 
-    // ------------------------------------
-    // Store new socket
-    // ------------------------------------
+    blockTypes.clear();
 
-    socket = newSocket;
-    currentDocumentId = documentId;
+    clearRemoteCursors();
 
-    // ====================================
-    // Handle Local Yjs Updates
-    // ====================================
+    // ========================================
+    // Create WebSocket
+    // ========================================
+
+    const newSocket =
+        new WebSocket(
+            `ws://localhost:5001/document/${documentId}?userId=${userId}`
+        );
+
+    socket =
+        newSocket;
+
+    currentDocumentId =
+        documentId;
+
+    // ========================================
+    // Local Yjs Update Handler
+    // ========================================
 
     const handleYjsUpdate = (
         update: Uint8Array,
@@ -354,101 +637,116 @@ export const connectToDocument = (
     ): void => {
 
         // --------------------------------
-        // Do not send remote updates back
+        // Ignore remote updates
         // --------------------------------
 
-        if (origin === "remote") {
+        if (
+            origin ===
+            "remote"
+        ) {
+
             return;
         }
 
         // --------------------------------
-        // Make sure this WebSocket is open
+        // Socket must be open
         // --------------------------------
 
         if (
             newSocket.readyState !==
             WebSocket.OPEN
         ) {
+
             return;
         }
 
         // --------------------------------
-        // Convert Uint8Array to ArrayBuffer
+        // Convert update
         // --------------------------------
 
         const buffer =
             update.buffer.slice(
                 update.byteOffset,
                 update.byteOffset +
-                update.byteLength
+                    update.byteLength
             ) as ArrayBuffer;
 
         // --------------------------------
-        // Send Yjs update
+        // Send update
         // --------------------------------
 
-        newSocket.send(buffer);
+        newSocket.send(
+            buffer
+        );
     };
 
-    // ====================================
-    // Register Yjs Update Listener
-    // ====================================
+    // ========================================
+    // Register Listener
+    // ========================================
 
     ydoc.on(
         "update",
         handleYjsUpdate
     );
 
-    // ====================================
-    // Remove Yjs Listener
-    // ====================================
+    // ========================================
+    // Remove Listener
+    // ========================================
 
-    removeYjsListener = () => {
-        ydoc.off(
-            "update",
-            handleYjsUpdate
-        );
-    };
+    removeYjsListener =
+        () => {
 
-    // ====================================
+            ydoc.off(
+                "update",
+                handleYjsUpdate
+            );
+        };
+
+    // ========================================
     // WebSocket Open
-    // ====================================
+    // ========================================
 
-    newSocket.onopen = () => {
-        console.log(
-            "Connected to document:",
-            documentId
-        );
+    newSocket.onopen =
+        () => {
 
-        console.log(
-            "WebSocket user ID:",
-            userId
-        );
-    };
+            console.log(
+                "Connected to document:",
+                documentId
+            );
 
-    // ====================================
+            console.log(
+                "WebSocket user ID:",
+                userId
+            );
+        };
+
+    // ========================================
     // WebSocket Message
-    // ====================================
+    // ========================================
 
     newSocket.onmessage =
         async (event) => {
 
             // =================================
-            // Server control message
+            // TEXT MESSAGE
             // =================================
 
             if (
                 typeof event.data ===
                 "string"
             ) {
+
                 let message: any;
 
                 try {
+
                     message =
                         JSON.parse(
                             event.data
                         );
+
                 } catch (error) {
+
                     console.error(
                         "Invalid WebSocket control message:",
                         error
@@ -457,80 +755,15 @@ export const connectToDocument = (
                     return;
                 }
 
-                // --------------------------------
-                // Remote cursor position
-                // --------------------------------
-
-                if (
-                    message.type ===
-                    "cursor"
-                ) {
-                    if (
-                        message.userId &&
-                        message.userId !== userId
-                    ) {
-                        remoteCursors.set(
-                            message.userId,
-                            {
-                                userId:
-                                    message.userId,
-
-                                blockId:
-                                    message.blockId,
-
-                                cursorPosition:
-                                    message.cursorPosition,
-
-                                selectionStart:
-                                    message.selectionStart,
-
-                                selectionEnd:
-                                    message.selectionEnd
-                            }
-                        );
-
-                        window.dispatchEvent(
-                            new CustomEvent(
-                                "syncdoc-cursor-update"
-                            )
-                        );
-
-                        console.log(
-                            "REMOTE CURSOR:",
-                            message
-                        );
-                    }
-
-                    return;
-                }
-
-                // --------------------------------
-                // Remote cursor removed
-                // --------------------------------
-
-                if (
-                    message.type ===
-                    "cursorRemoved"
-                ) {
-                    if (
-                        message.userId
-                    ) {
-                        removeRemoteCursor(
-                            message.userId
-                        );
-                    }
-
-                    return;
-                }
-
-                // --------------------------------
-                // Lock result
-                // --------------------------------
+                // =================================
+                // Lock Result
+                // =================================
 
                 if (
                     message.type ===
                     "lockResult"
                 ) {
+
                     console.log(
                         "LOCK RESULT:",
                         message
@@ -540,7 +773,8 @@ export const connectToDocument = (
                         new CustomEvent(
                             "syncdoc-lock-result",
                             {
-                                detail: message
+                                detail:
+                                    message
                             }
                         )
                     );
@@ -548,14 +782,15 @@ export const connectToDocument = (
                     return;
                 }
 
-                // --------------------------------
-                // Unlock result
-                // --------------------------------
+                // =================================
+                // Unlock Result
+                // =================================
 
                 if (
                     message.type ===
                     "unlockResult"
                 ) {
+
                     console.log(
                         "UNLOCK RESULT:",
                         message
@@ -565,7 +800,8 @@ export const connectToDocument = (
                         new CustomEvent(
                             "syncdoc-unlock-result",
                             {
-                                detail: message
+                                detail:
+                                    message
                             }
                         )
                     );
@@ -573,49 +809,192 @@ export const connectToDocument = (
                     return;
                 }
 
-                // --------------------------------
-                // Initialize document
-                // --------------------------------
+                // =================================
+                // Remote Cursor
+                // =================================
+
+                if (
+                    message.type ===
+                    "cursor"
+                ) {
+
+                    if (
+                        !message.userId ||
+                        message.userId ===
+                            userId ||
+                        !message.blockId
+                    ) {
+
+                        return;
+                    }
+
+                    remoteCursors.set(
+                        message.userId,
+                        {
+                            userId:
+                                message.userId,
+
+                            blockId:
+                                message.blockId,
+
+                            cursorPosition:
+                                Number(
+                                    message.cursorPosition
+                                ),
+
+                            selectionStart:
+                                Number(
+                                    message.selectionStart
+                                ),
+
+                            selectionEnd:
+                                Number(
+                                    message.selectionEnd
+                                )
+                        }
+                    );
+
+                    window.dispatchEvent(
+                        new Event(
+                            "syncdoc-cursor-update"
+                        )
+                    );
+
+                    return;
+                }
+
+                // =================================
+                // Remote Cursor Removed
+                // =================================
+
+                if (
+                    message.type ===
+                    "cursorRemoved"
+                ) {
+
+                    if (
+                        message.userId
+                    ) {
+
+                        removeRemoteCursor(
+                            message.userId
+                        );
+                    }
+
+                    return;
+                }
+
+                // =================================
+                // INITIALIZE FROM MONGODB
+                // =================================
 
                 if (
                     message.type ===
                     "initialize"
                 ) {
+
                     console.log(
                         "Initializing document from MongoDB"
                     );
 
+                    // ========================================
+                    // STEP 1
+                    // Clean Existing Yjs Order
+                    // ========================================
+
+                    cleanBlockOrder();
+
+                    // ========================================
+                    // STEP 2
+                    // Restore MongoDB Blocks
+                    // ========================================
+
                     documentBlocks.forEach(
                         (block) => {
 
-                            const existingText =
+                            // ====================================
+                            // Restore Y.Text
+                            // ====================================
+
+                            let sharedText =
                                 blocks.get(
                                     block._id
                                 );
 
-                            // Do not recreate
-                            // existing block
-
                             if (
-                                existingText
+                                !sharedText
                             ) {
-                                return;
+
+                                sharedText =
+                                    new Y.Text();
+
+                                // -------------------------------
+                                // Restore content
+                                // -------------------------------
+
+                                if (
+                                    block.content
+                                ) {
+
+                                    sharedText.insert(
+                                        0,
+                                        block.content
+                                    );
+                                }
+
+                                blocks.set(
+                                    block._id,
+                                    sharedText
+                                );
+
+                                console.log(
+                                    "BLOCK RESTORED:",
+                                    block._id
+                                );
                             }
 
-                            const text =
-                                new Y.Text();
+                            // ====================================
+                            // Restore Block Type
+                            // ====================================
 
-                            text.insert(
-                                0,
-                                block.content
-                            );
+                            if (
+                                !blockTypes.has(
+                                    block._id
+                                )
+                            ) {
 
-                            blocks.set(
-                                block._id,
-                                text
+                                blockTypes.set(
+                                    block._id,
+                                    block.type
+                                );
+
+                                console.log(
+                                    "BLOCK TYPE RESTORED:",
+                                    block._id
+                                );
+                            }
+
+                            // ====================================
+                            // Restore Block Order
+                            // ====================================
+
+                            ensureBlockInOrder(
+                                block._id
                             );
                         }
                     );
+
+                    // ========================================
+                    // STEP 3
+                    // Final Duplicate Cleanup
+                    // ========================================
+
+                    cleanBlockOrder();
+
+                    // ========================================
+                    // STEP 4
+                    // Sync Ready
+                    // ========================================
 
                     markSyncReady(
                         documentId
@@ -628,7 +1007,7 @@ export const connectToDocument = (
             }
 
             // =================================
-            // Binary Yjs Update
+            // BINARY YJS UPDATE
             // =================================
 
             console.log(
@@ -637,99 +1016,111 @@ export const connectToDocument = (
             );
 
             try {
-                const data =
-                    await event.data.arrayBuffer();
 
-                const update =
-                    new Uint8Array(
-                        data
-                    );
+    const data =
+        await event.data.arrayBuffer();
 
-                // --------------------------------
-                // Apply remote update
-                // --------------------------------
-
-                Y.applyUpdate(
-                    ydoc,
-                    update,
-                    "remote"
-                );
-
-                // --------------------------------
-                // Initial synchronization complete
-                // --------------------------------
-
-                markSyncReady(
-                    documentId
-                );
-
-            } catch (error) {
-                console.error(
-                    "Failed to apply Yjs update:",
-                    error
-                );
-            }
-        };
-
-    // ====================================
-    // WebSocket Close
-    // ====================================
-
-    newSocket.onclose = () => {
-        console.log(
-            "Disconnected from document:",
-            documentId
+    const update =
+        new Uint8Array(
+            data
         );
 
-        // --------------------------------
-        // Ignore old WebSocket close
-        // --------------------------------
+    // ========================================
+    // Apply Remote Yjs Update
+    // ========================================
 
-        if (
-            socket !== newSocket
-        ) {
+    Y.applyUpdate(
+        ydoc,
+        update,
+        "remote"
+    );
+
+    // ========================================
+    // Mark Synchronization Complete
+    // ========================================
+
+    markSyncReady(
+        documentId
+    );
+
+} catch (error) {
+
+    console.error(
+        "Failed to apply Yjs update:",
+        error
+    );
+}
+        };
+
+    // ========================================
+    // WebSocket Close
+    // ========================================
+
+    newSocket.onclose =
+        () => {
+
             console.log(
-                "Ignoring close from old WebSocket:",
+                "Disconnected from document:",
                 documentId
             );
 
-            return;
-        }
+            // --------------------------------
+            // Ignore old socket
+            // --------------------------------
 
-        // --------------------------------
-        // Remove Yjs listener
-        // --------------------------------
+            if (
+                socket !==
+                newSocket
+            ) {
 
-        if (removeYjsListener) {
-            removeYjsListener();
-            removeYjsListener = null;
-        }
+                console.log(
+                    "Ignoring old WebSocket close:",
+                    documentId
+                );
 
-        // --------------------------------
-        // Clear remote cursors
-        // --------------------------------
+                return;
+            }
 
-        clearRemoteCursors();
+            // --------------------------------
+            // Remove listener
+            // --------------------------------
 
-        // --------------------------------
-        // Reset connection state
-        // --------------------------------
+            if (
+                removeYjsListener
+            ) {
 
-        socket = null;
-        currentDocumentId = null;
-        syncReady = false;
-    };
+                removeYjsListener();
 
-    // ====================================
+                removeYjsListener =
+                    null;
+            }
+
+            // --------------------------------
+            // Reset state
+            // --------------------------------
+
+            socket =
+                null;
+
+            currentDocumentId =
+                null;
+
+            syncReady =
+                false;
+
+            clearRemoteCursors();
+        };
+
+    // ========================================
     // WebSocket Error
-    // ====================================
+    // ========================================
 
-    newSocket.onerror = (
-        error
-    ) => {
-        console.error(
-            "WebSocket error:",
-            error
-        );
-    };
+    newSocket.onerror =
+        (error) => {
+
+            console.error(
+                "WebSocket error:",
+                error
+            );
+        };
 };

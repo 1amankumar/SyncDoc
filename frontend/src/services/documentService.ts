@@ -103,3 +103,50 @@ export const createDocument =
 
         return response.blob();
     };
+
+// ========================================
+// Add Block To Document
+// ========================================
+
+export const addBlockToDocument =
+    async (
+        documentId: string,
+        block: Document["blocks"][number]
+    ): Promise<void> => {
+
+        const response = await fetch(
+            `${API_URL}/${documentId}/blocks`,
+            {
+                method: "POST",
+
+                headers: {
+                    "Content-Type":
+                        "application/json"
+                },
+
+                credentials: "include",
+
+                body: JSON.stringify(block)
+            }
+        );
+
+        if (response.status === 401) {
+
+            throw new Error(
+                "UNAUTHORIZED"
+            );
+        }
+
+        if (!response.ok) {
+
+            const data =
+                await response
+                    .json()
+                    .catch(() => null);
+
+            throw new Error(
+                data?.message ||
+                `Failed to save block: ${response.status}`
+            );
+        }
+    };

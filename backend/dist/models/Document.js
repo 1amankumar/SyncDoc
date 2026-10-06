@@ -34,7 +34,14 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 const mongoose_1 = __importStar(require("mongoose"));
+// ========================================
+// Block Schema
+// ========================================
 const blockSchema = new mongoose_1.Schema({
+    _id: {
+        type: String,
+        required: true
+    },
     type: {
         type: String,
         required: true,
@@ -42,10 +49,10 @@ const blockSchema = new mongoose_1.Schema({
     },
     content: {
         type: String,
-        required: true
+        default: ""
     }
 }, {
-    _id: true
+    _id: false
 });
 blockSchema.add({
     children: {
@@ -53,6 +60,9 @@ blockSchema.add({
         default: []
     }
 });
+// ========================================
+// Document Schema
+// ========================================
 const documentSchema = new mongoose_1.Schema({
     title: {
         type: String,
@@ -66,23 +76,33 @@ const documentSchema = new mongoose_1.Schema({
 }, {
     timestamps: true
 });
-documentSchema.pre("save", function (next) {
+// ========================================
+// Validation
+// ========================================
+documentSchema.pre("save", async function () {
     const validateBlocks = (blocks) => {
         for (const block of blocks) {
+            if (!block._id) {
+                throw new Error("Block ID is required");
+            }
             if (!block.type.trim()) {
                 throw new Error("Block type is required");
             }
-            if (typeof block.content !== "string") {
+            if (typeof block.content !==
+                "string") {
                 throw new Error("Block content must be a string");
             }
-            if (block.children.length > 0) {
+            if (block.children &&
+                block.children.length > 0) {
                 validateBlocks(block.children);
             }
         }
     };
     validateBlocks(this.blocks);
-    //next();
 });
+// ========================================
+// Model
+// ========================================
 const DocumentModel = mongoose_1.default.model("Document", documentSchema);
 exports.default = DocumentModel;
 //# sourceMappingURL=Document.js.map

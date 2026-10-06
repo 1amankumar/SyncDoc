@@ -34,6 +34,119 @@ const sanitizedBlocks =
     }
 };
 
+// ========================================
+// Add Block To Document
+// ========================================
+
+export const addBlockToDocument = async (
+    req: Request,
+    res: Response
+): Promise<void> => {
+
+    try {
+
+        const { id } = req.params;
+
+        const {
+            _id,
+            type,
+            content = "",
+            children = []
+        } = req.body;
+
+        // --------------------------------
+        // Validate block
+        // --------------------------------
+
+        if (!_id || !type) {
+
+            res.status(400).json({
+                message:
+                    "Block ID and type are required"
+            });
+
+            return;
+        }
+
+        // --------------------------------
+        // Find document
+        // --------------------------------
+
+        const document =
+            await DocumentModel.findById(id);
+
+        if (!document) {
+
+            res.status(404).json({
+                message:
+                    "Document not found"
+            });
+
+            return;
+        }
+
+        // --------------------------------
+        // Prevent duplicate block
+        // --------------------------------
+
+        const blockExists =
+            document.blocks.some(
+                (block) =>
+                    block._id === _id
+            );
+
+        if (blockExists) {
+
+            res.status(200).json({
+                message:
+                    "Block already exists"
+            });
+
+            return;
+        }
+
+        // --------------------------------
+        // Create block
+        // --------------------------------
+
+        document.blocks.push({
+            _id,
+            type,
+            content,
+            children
+        });
+
+        // --------------------------------
+        // Save document
+        // --------------------------------
+
+        await document.save();
+
+        res.status(201).json({
+            message:
+                "Block added successfully",
+            block: {
+                _id,
+                type,
+                content,
+                children
+            }
+        });
+
+    } catch (error) {
+
+        console.error(
+            "Failed to add block:",
+            error
+        );
+
+        res.status(500).json({
+            message:
+                "Failed to add block"
+        });
+    }
+};
+
 export const getDocuments = async (
     _req: Request,
     res: Response
