@@ -1,8 +1,11 @@
 import PDFDocument from "pdfkit";
-import type { PdfBlock } from "./transformationService.js";
+
+import type {
+    PdfBlock
+} from "./transformationService.js";
 
 // ========================================
-// Add Block to PDF
+// Add Block To PDF
 // ========================================
 
 const addBlockToPdf = (
@@ -10,30 +13,56 @@ const addBlockToPdf = (
     block: PdfBlock
 ): void => {
 
-    if (block.type === "heading") {
+    // ========================================
+    // Heading
+    // ========================================
+
+    if (
+        block.type === "heading"
+    ) {
 
         doc
             .fontSize(20)
             .font("Helvetica-Bold")
-            .text(block.content);
+            .text(
+                block.content
+            );
 
         doc.moveDown(0.5);
 
-    } else if (block.type === "code") {
+    }
+
+    // ========================================
+    // Code
+    // ========================================
+
+    else if (
+        block.type === "code"
+    ) {
 
         doc
             .fontSize(10)
             .font("Courier")
-            .text(block.content);
+            .text(
+                block.content
+            );
 
         doc.moveDown(0.5);
 
-    } else {
+    }
+
+    // ========================================
+    // Paragraph
+    // ========================================
+
+    else {
 
         doc
             .fontSize(12)
             .font("Helvetica")
-            .text(block.content);
+            .text(
+                block.content
+            );
 
         doc.moveDown(0.5);
     }
@@ -42,7 +71,9 @@ const addBlockToPdf = (
     // Render Child Blocks
     // ========================================
 
-    for (const child of block.children) {
+    for (
+        const child of block.children
+    ) {
 
         addBlockToPdf(
             doc,
@@ -65,24 +96,40 @@ export const generatePdf = (
             margin: 50
         });
 
-    // Document title
+    // ========================================
+    // Document Title
+    // ========================================
 
     doc
         .fontSize(24)
         .font("Helvetica-Bold")
-        .text(title);
+        .text(
+            title
+        );
 
     doc.moveDown(1);
 
-    // Document blocks
+    // ========================================
+    // Document Blocks
+    // ========================================
 
-    for (const block of blocks) {
+    for (
+        const block of blocks
+    ) {
 
         addBlockToPdf(
             doc,
             block
         );
     }
+
+    // ========================================
+    // Do NOT call doc.end() here.
+    //
+    // The controller will pipe the PDF
+    // to the HTTP response and then call
+    // doc.end().
+    // ========================================
 
     return doc;
 };

@@ -3,6 +3,8 @@ import {
     WebSocket
 } from "ws";
 
+import UserModel from "../models/user.js";
+
 import * as Y from "yjs";
 
 import {
@@ -25,7 +27,120 @@ const documents =
 // ========================================
 
 const clients =
-    new Map<string, Set<WebSocket>>();
+    new Map<
+        string,
+        Set<WebSocket>
+    >();
+
+
+// ========================================
+// Client User IDs
+// ========================================
+
+const clientUsers =
+    new Map<
+        WebSocket,
+        string
+    >();
+
+const broadcastCollaborators = async (
+    documentId: string
+): Promise<void> => {
+    const documentClients =
+        clients.get(documentId);
+
+    if (!documentClients) {
+        return;
+    }
+
+    const userIds = new Set<string>();
+
+    documentClients.forEach((client) => {
+        const connectedUser =
+            clientUsers.get(client);
+
+        if (connectedUser) {
+            userIds.add(connectedUser);
+        }
+    });
+
+    const users =
+        await UserModel.find(
+            {
+                _id: {
+                    $in:
+                        Array.from(
+                            userIds
+                        )
+                }
+            },
+            {
+                name: 1
+            }
+        ).lean();
+
+    const collaborators = Array.from(
+        userIds
+    ).map((userId) => {
+        const user =
+            users.find(
+                (item) =>
+                    item._id.toString() ===
+                    userId
+            );
+
+        return {
+            id: userId,
+            name:
+                user?.name ||
+                "Unknown User"
+        };
+    });
+
+    const message =
+        JSON.stringify({
+            type: "collaborators",
+            users: collaborators,
+            count:
+                collaborators.length
+        });
+
+    documentClients.forEach(
+        (client) => {
+            if (
+                client.readyState ===
+                WebSocket.OPEN
+            ) {
+                client.send(message);
+            }
+        }
+    );
+
+    console.log(
+        "COLLABORATORS:",
+        documentId,
+        collaborators
+    );
+};
+
+// ========================================
+// Delete Requests
+// ========================================
+
+interface DeleteRequest {
+    requestId: string;
+    documentId: string;
+    blockId: string;
+    requesterId: string;
+    ownerId: string;
+    requesterSocket: WebSocket;
+}
+
+const deleteRequests =
+    new Map<
+        string,
+        DeleteRequest
+    >();
 
 // ========================================
 // MongoDB Auto-Save
@@ -198,6 +313,281 @@ const scheduleDocumentSave =
             timer
         );
     };
+// ========================================
+// Validate Yjs Block Update
+// ========================================
+
+const getChangedBlockIds = (
+    currentDoc: Y.Doc,
+    incomingUpdate: Uint8Array
+): string[] => {
+
+    // ----------------------------------------
+    // Create temporary document
+    // ----------------------------------------
+
+    const tempDoc = new Y.Doc();
+
+    // Copy current server state
+    const currentState = Y.encodeStateAsUpdate(
+        currentDoc
+    );
+
+    Y.applyUpdate(
+        tempDoc,
+        currentState
+    );
+
+    // ----------------------------------------
+    // Apply incoming update to temporary doc
+    // ----------------------------------------
+
+    Y.applyUpdate(
+        tempDoc,
+        incomingUpdate
+    );
+
+    // ----------------------------------------
+    // Get current and updated blocks
+    // ----------------------------------------
+
+    const currentBlocks =
+        currentDoc.getMap<Y.Text>("blocks");
+
+    const updatedBlocks =
+        tempDoc.getMap<Y.Text>("blocks");
+
+    const changedBlockIds = new Set<string>();
+
+    // ----------------------------------------
+    // Check existing blocks
+    // ----------------------------------------
+
+    currentBlocks.forEach(
+        (currentText, blockId) => {
+
+            const updatedText =
+                updatedBlocks.get(blockId);
+
+            if (
+                !(currentText instanceof Y.Text) ||
+                !(updatedText instanceof Y.Text)
+            ) {
+                return;
+            }
+
+            if (
+                currentText.toString() !==
+                updatedText.toString()
+            ) {
+                changedBlockIds.add(blockId);
+            }
+        }
+    );
+
+    // ----------------------------------------
+    // Check newly created blocks
+    // ----------------------------------------
+
+    updatedBlocks.forEach(
+        (updatedText, blockId) => {
+
+            if (
+                !currentBlocks.has(blockId)
+            ) {
+                changedBlockIds.add(blockId);
+            }
+        }
+    );
+
+    // ----------------------------------------
+    // Check deleted blocks
+    // ----------------------------------------
+
+    currentBlocks.forEach(
+        (_currentText, blockId) => {
+
+            if (
+                !updatedBlocks.has(blockId)
+            ) {
+                changedBlockIds.add(blockId);
+            }
+        }
+    );
+
+    return Array.from(
+        changedBlockIds
+    );
+};
+
+// ========================================
+// Broadcast Yjs Update
+// ========================================
+
+const broadcastUpdate =
+    (
+        documentClients:
+            Set<WebSocket> | undefined,
+        update: Uint8Array
+    ): void => {
+
+        if (
+            !documentClients ||
+            update.length === 0
+        ) {
+            return;
+        }
+
+        documentClients.forEach(
+            (
+                client
+            ) => {
+
+                if (
+                    client.readyState ===
+                    WebSocket.OPEN
+                ) {
+
+                    client.send(
+                        update
+                    );
+                }
+            }
+        );
+    };
+
+// ========================================
+// Delete Block
+// ========================================
+
+const deleteBlockFromYjs =
+    (
+        ydoc: Y.Doc,
+        blockId: string
+    ): Uint8Array => {
+
+        const stateBefore =
+            Y.encodeStateVector(
+                ydoc
+            );
+
+        const blocks =
+            ydoc.getMap<Y.Text>(
+                "blocks"
+            );
+
+        const blockTypes =
+            ydoc.getMap<string>(
+                "blockTypes"
+            );
+
+        const blockOrder =
+            ydoc.getArray<string>(
+                "blockOrder"
+            );
+
+        ydoc.transact(
+            () => {
+
+                // --------------------------------
+                // Remove block content
+                // --------------------------------
+
+                blocks.delete(
+                    blockId
+                );
+
+                // --------------------------------
+                // Remove block type
+                // --------------------------------
+
+                blockTypes.delete(
+                    blockId
+                );
+
+                // --------------------------------
+                // Remove block from order
+                // --------------------------------
+
+                const order =
+                    blockOrder.toArray();
+
+                const index =
+                    order.indexOf(
+                        blockId
+                    );
+
+                if (
+                    index !== -1
+                ) {
+
+                    blockOrder.delete(
+                        index,
+                        1
+                    );
+                }
+
+                // --------------------------------
+                // Remove block lock
+                // --------------------------------
+
+                const blockLocks =
+                    ydoc.getMap<string>(
+                        "blockLocks"
+                    );
+
+                blockLocks.delete(
+                    blockId
+                );
+            }
+        );
+
+        return Y.encodeStateAsUpdate(
+            ydoc,
+            stateBefore
+        );
+    };
+
+// ========================================
+// Find Socket By User ID
+// ========================================
+
+const findClientByUserId =
+    (
+        documentId: string,
+        userId: string
+    ): WebSocket | null => {
+
+        const documentClients =
+            clients.get(
+                documentId
+            );
+
+        if (!documentClients) {
+            return null;
+        }
+
+        for (
+            const client
+            of documentClients
+        ) {
+
+            const clientUserId =
+                clientUsers.get(
+                    client
+                );
+
+            if (
+                clientUserId ===
+                userId
+            ) {
+
+                return client;
+            }
+        }
+
+        return null;
+    };
 
 // ========================================
 // WebSocket Server
@@ -214,7 +604,10 @@ const ws =
 
 ws.on(
     "connection",
-    (socket, request) => {
+    (
+        socket,
+        request
+    ) => {
 
         // --------------------------------
         // Get URL information
@@ -230,7 +623,9 @@ ws.on(
             url.pathname.split("/")[2];
 
         const userId =
-            url.searchParams.get("userId");
+            url.searchParams.get(
+                "userId"
+            );
 
         // --------------------------------
         // Validate connection
@@ -331,6 +726,14 @@ ws.on(
             socket
         );
 
+        clientUsers.set(
+            socket,
+            userId
+        );
+        broadcastCollaborators(
+            documentId
+        );
+
         // ========================================
         // Receive Messages
         // ========================================
@@ -351,6 +754,7 @@ ws.on(
                     let controlMessage: {
                         type: string;
                         blockId?: string;
+                        requestId?: string;
                         cursorPosition?: number;
                         selectionStart?: number;
                         selectionEnd?: number;
@@ -398,11 +802,6 @@ ws.on(
                                 blockId
                             );
 
-                        // --------------------------------
-                        // Block already locked by another
-                        // user
-                        // --------------------------------
-
                         if (
                             currentOwner &&
                             currentOwner !==
@@ -413,12 +812,9 @@ ws.on(
                                 JSON.stringify({
                                     type:
                                         "lockResult",
-
                                     blockId,
-
                                     granted:
                                         false,
-
                                     lockedBy:
                                         currentOwner
                                 })
@@ -434,10 +830,6 @@ ws.on(
                             return;
                         }
 
-                        // --------------------------------
-                        // User already owns this lock
-                        // --------------------------------
-
                         if (
                             currentOwner ===
                             userId
@@ -447,12 +839,9 @@ ws.on(
                                 JSON.stringify({
                                     type:
                                         "lockResult",
-
                                     blockId,
-
                                     granted:
                                         true,
-
                                     lockedBy:
                                         userId
                                 })
@@ -468,18 +857,10 @@ ws.on(
                             return;
                         }
 
-                        // --------------------------------
-                        // Save state before lock
-                        // --------------------------------
-
                         const stateBefore =
                             Y.encodeStateVector(
                                 ydoc!
                             );
-
-                        // --------------------------------
-                        // Acquire lock
-                        // --------------------------------
 
                         ydoc!.transact(
                             () => {
@@ -488,13 +869,8 @@ ws.on(
                                     blockId,
                                     userId
                                 );
-
                             }
                         );
-
-                        // --------------------------------
-                        // Create lock update
-                        // --------------------------------
 
                         const lockUpdate =
                             Y.encodeStateAsUpdate(
@@ -502,50 +878,22 @@ ws.on(
                                 stateBefore
                             );
 
-                        // --------------------------------
-                        // Tell requester lock succeeded
-                        // --------------------------------
-
                         socket.send(
                             JSON.stringify({
                                 type:
                                     "lockResult",
-
                                 blockId,
-
                                 granted:
                                     true,
-
                                 lockedBy:
                                     userId
                             })
                         );
 
-                        // --------------------------------
-                        // Broadcast lock update
-                        // --------------------------------
-
-                        if (
-                            lockUpdate.length > 0
-                        ) {
-
-                            documentClients?.forEach(
-                                (
-                                    client
-                                ) => {
-
-                                    if (
-                                        client.readyState ===
-                                        WebSocket.OPEN
-                                    ) {
-
-                                        client.send(
-                                            lockUpdate
-                                        );
-                                    }
-                                }
-                            );
-                        }
+                        broadcastUpdate(
+                            documentClients,
+                            lockUpdate
+                        );
 
                         console.log(
                             "LOCK ACQUIRED:",
@@ -583,10 +931,6 @@ ws.on(
                                 blockId
                             );
 
-                        // --------------------------------
-                        // Only owner can unlock
-                        // --------------------------------
-
                         if (
                             currentOwner !==
                             userId
@@ -596,9 +940,7 @@ ws.on(
                                 JSON.stringify({
                                     type:
                                         "unlockResult",
-
                                     blockId,
-
                                     released:
                                         false
                                 })
@@ -616,18 +958,10 @@ ws.on(
                             return;
                         }
 
-                        // --------------------------------
-                        // Save state before unlock
-                        // --------------------------------
-
                         const stateBefore =
                             Y.encodeStateVector(
                                 ydoc!
                             );
-
-                        // --------------------------------
-                        // Release lock
-                        // --------------------------------
 
                         ydoc!.transact(
                             () => {
@@ -635,13 +969,8 @@ ws.on(
                                 blockLocks.delete(
                                     blockId
                                 );
-
                             }
                         );
-
-                        // --------------------------------
-                        // Create unlock update
-                        // --------------------------------
 
                         const unlockUpdate =
                             Y.encodeStateAsUpdate(
@@ -649,52 +978,565 @@ ws.on(
                                 stateBefore
                             );
 
-                        // --------------------------------
-                        // Tell requester unlock succeeded
-                        // --------------------------------
-
                         socket.send(
                             JSON.stringify({
                                 type:
                                     "unlockResult",
-
                                 blockId,
-
                                 released:
                                     true
                             })
                         );
 
-                        // --------------------------------
-                        // Broadcast unlock update
-                        // --------------------------------
-
-                        if (
-                            unlockUpdate.length > 0
-                        ) {
-
-                            documentClients?.forEach(
-                                (
-                                    client
-                                ) => {
-
-                                    if (
-                                        client.readyState ===
-                                        WebSocket.OPEN
-                                    ) {
-
-                                        client.send(
-                                            unlockUpdate
-                                        );
-                                    }
-                                }
-                            );
-                        }
+                        broadcastUpdate(
+                            documentClients,
+                            unlockUpdate
+                        );
 
                         console.log(
                             "LOCK RELEASED:",
                             blockId,
                             "by",
+                            userId
+                        );
+
+                        return;
+                    }
+
+                    // ====================================
+                    // REQUEST DELETE
+                    // ====================================
+
+                    if (
+                        controlMessage.type ===
+                        "request-delete"
+                    ) {
+
+                        const blockId =
+                            controlMessage.blockId;
+
+                        if (!blockId) {
+                            return;
+                        }
+
+                        const blocks =
+                            ydoc!.getMap<Y.Text>(
+                                "blocks"
+                            );
+
+                        if (
+                            !blocks.has(
+                                blockId
+                            )
+                        ) {
+
+                            socket.send(
+                                JSON.stringify({
+                                    type:
+                                        "deleteResult",
+                                    blockId,
+                                    deleted:
+                                        false,
+                                    reason:
+                                        "Block does not exist"
+                                })
+                            );
+
+                            return;
+                        }
+
+                        const blockLocks =
+                            ydoc!.getMap<string>(
+                                "blockLocks"
+                            );
+
+                        const lockOwner =
+                            blockLocks.get(
+                                blockId
+                            );
+
+                        // --------------------------------
+                        // No lock
+                        // --------------------------------
+
+                        if (!lockOwner) {
+
+                            const deleteUpdate =
+                                deleteBlockFromYjs(
+                                    ydoc!,
+                                    blockId
+                                );
+
+                            scheduleDocumentSave(
+                                documentId,
+                                ydoc!
+                            );
+
+                            broadcastUpdate(
+                                documentClients,
+                                deleteUpdate
+                            );
+
+                            socket.send(
+                                JSON.stringify({
+                                    type:
+                                        "deleteResult",
+                                    blockId,
+                                    deleted:
+                                        true
+                                })
+                            );
+
+                            console.log(
+                                "BLOCK DELETED:",
+                                blockId,
+                                "by",
+                                userId
+                            );
+
+                            return;
+                        }
+
+                        // --------------------------------
+                        // Current user owns lock
+                        // --------------------------------
+
+                        if (
+                            lockOwner ===
+                            userId
+                        ) {
+
+                            const deleteUpdate =
+                                deleteBlockFromYjs(
+                                    ydoc!,
+                                    blockId
+                                );
+
+                            scheduleDocumentSave(
+                                documentId,
+                                ydoc!
+                            );
+
+                            broadcastUpdate(
+                                documentClients,
+                                deleteUpdate
+                            );
+
+                            socket.send(
+                                JSON.stringify({
+                                    type:
+                                        "deleteResult",
+                                    blockId,
+                                    deleted:
+                                        true
+                                })
+                            );
+
+                            console.log(
+                                "BLOCK DELETED BY LOCK OWNER:",
+                                blockId,
+                                "by",
+                                userId
+                            );
+
+                            return;
+                        }
+
+                        // --------------------------------
+                        // Block belongs to another user
+                        // --------------------------------
+
+                        const ownerSocket =
+                            findClientByUserId(
+                                documentId,
+                                lockOwner
+                            );
+
+                        if (!ownerSocket) {
+
+                            socket.send(
+                                JSON.stringify({
+                                    type:
+                                        "deleteResult",
+                                    blockId,
+                                    deleted:
+                                        false,
+                                    reason:
+                                        "Block owner is not connected"
+                                })
+                            );
+
+                            return;
+                        }
+
+                        // --------------------------------
+                        // Create delete request
+                        // --------------------------------
+
+                        const requestId =
+                            crypto.randomUUID();
+
+                        deleteRequests.set(
+                            requestId,
+                            {
+                                requestId,
+                                documentId,
+                                blockId,
+                                requesterId:
+                                    userId,
+                                ownerId:
+                                    lockOwner,
+                                requesterSocket:
+                                    socket
+                            }
+                        );
+
+                        // --------------------------------
+                        // Tell block owner
+                        // --------------------------------
+
+                        ownerSocket.send(
+                            JSON.stringify({
+                                type:
+                                    "delete-request",
+                                requestId,
+                                blockId,
+                                requesterId:
+                                    userId
+                            })
+                        );
+
+                        // --------------------------------
+                        // Tell requester
+                        // --------------------------------
+
+                        socket.send(
+                            JSON.stringify({
+                                type:
+                                    "delete-pending",
+                                requestId,
+                                blockId,
+                                ownerId:
+                                    lockOwner
+                            })
+                        );
+
+                        console.log(
+                            "DELETE REQUEST CREATED:",
+                            requestId,
+                            "block:",
+                            blockId,
+                            "requester:",
+                            userId,
+                            "owner:",
+                            lockOwner
+                        );
+
+                        return;
+                    }
+
+                    // ====================================
+                    // APPROVE DELETE
+                    // ====================================
+
+                    if (
+                        controlMessage.type ===
+                        "approve-delete"
+                    ) {
+
+                        const requestId =
+                            controlMessage.requestId;
+
+                        if (!requestId) {
+                            return;
+                        }
+
+                        const deleteRequest =
+                            deleteRequests.get(
+                                requestId
+                            );
+
+                        if (!deleteRequest) {
+
+                            socket.send(
+                                JSON.stringify({
+                                    type:
+                                        "deleteResult",
+                                    requestId,
+                                    deleted:
+                                        false,
+                                    reason:
+                                        "Delete request no longer exists"
+                                })
+                            );
+
+                            return;
+                        }
+
+                        // --------------------------------
+                        // Only lock owner can approve
+                        // --------------------------------
+
+                        if (
+                            deleteRequest.ownerId !==
+                            userId
+                        ) {
+
+                            socket.send(
+                                JSON.stringify({
+                                    type:
+                                        "deleteResult",
+                                    requestId,
+                                    deleted:
+                                        false,
+                                    reason:
+                                        "Only the block owner can approve"
+                                })
+                            );
+
+                            return;
+                        }
+
+                        const blockLocks =
+                            ydoc!.getMap<string>(
+                                "blockLocks"
+                            );
+
+                        const currentOwner =
+                            blockLocks.get(
+                                deleteRequest.blockId
+                            );
+
+                        // --------------------------------
+                        // Verify lock is still owned
+                        // --------------------------------
+
+                        if (
+                            currentOwner !==
+                            userId
+                        ) {
+
+                            deleteRequests.delete(
+                                requestId
+                            );
+
+                            socket.send(
+                                JSON.stringify({
+                                    type:
+                                        "deleteResult",
+                                    requestId,
+                                    blockId:
+                                        deleteRequest.blockId,
+                                    deleted:
+                                        false,
+                                    reason:
+                                        "Block lock is no longer owned by you"
+                                })
+                            );
+
+                            return;
+                        }
+
+                        // --------------------------------
+                        // Delete block
+                        // --------------------------------
+
+                        const deleteUpdate =
+                            deleteBlockFromYjs(
+                                ydoc!,
+                                deleteRequest.blockId
+                            );
+
+                        deleteRequests.delete(
+                            requestId
+                        );
+
+                        scheduleDocumentSave(
+                            documentId,
+                            ydoc!
+                        );
+
+                        // --------------------------------
+                        // Broadcast deletion
+                        // --------------------------------
+
+                        broadcastUpdate(
+                            documentClients,
+                            deleteUpdate
+                        );
+
+                        // --------------------------------
+                        // Tell requester
+                        // --------------------------------
+
+                        if (
+                            deleteRequest
+                                .requesterSocket
+                                .readyState ===
+                            WebSocket.OPEN
+                        ) {
+
+                            deleteRequest
+                                .requesterSocket
+                                .send(
+                                    JSON.stringify({
+                                        type:
+                                            "deleteResult",
+                                        requestId,
+                                        blockId:
+                                            deleteRequest.blockId,
+                                        deleted:
+                                            true
+                                    })
+                                );
+                        }
+
+                        // --------------------------------
+                        // Tell owner
+                        // --------------------------------
+
+                        socket.send(
+                            JSON.stringify({
+                                type:
+                                    "deleteResult",
+                                requestId,
+                                blockId:
+                                    deleteRequest.blockId,
+                                deleted:
+                                    true
+                            })
+                        );
+
+                        console.log(
+                            "DELETE APPROVED:",
+                            requestId,
+                            "block:",
+                            deleteRequest.blockId,
+                            "approved by:",
+                            userId
+                        );
+
+                        return;
+                    }
+
+                    // ====================================
+                    // REJECT DELETE
+                    // ====================================
+
+                    if (
+                        controlMessage.type ===
+                        "reject-delete"
+                    ) {
+
+                        const requestId =
+                            controlMessage.requestId;
+
+                        if (!requestId) {
+                            return;
+                        }
+
+                        const deleteRequest =
+                            deleteRequests.get(
+                                requestId
+                            );
+
+                        if (!deleteRequest) {
+
+                            socket.send(
+                                JSON.stringify({
+                                    type:
+                                        "deleteResult",
+                                    requestId,
+                                    deleted:
+                                        false,
+                                    reason:
+                                        "Delete request no longer exists"
+                                })
+                            );
+
+                            return;
+                        }
+
+                        // --------------------------------
+                        // Only lock owner can reject
+                        // --------------------------------
+
+                        if (
+                            deleteRequest.ownerId !==
+                            userId
+                        ) {
+
+                            socket.send(
+                                JSON.stringify({
+                                    type:
+                                        "deleteResult",
+                                    requestId,
+                                    deleted:
+                                        false,
+                                    reason:
+                                        "Only the block owner can reject"
+                                })
+                            );
+
+                            return;
+                        }
+
+                        deleteRequests.delete(
+                            requestId
+                        );
+
+                        // --------------------------------
+                        // Tell requester
+                        // --------------------------------
+
+                        if (
+                            deleteRequest
+                                .requesterSocket
+                                .readyState ===
+                            WebSocket.OPEN
+                        ) {
+
+                            deleteRequest
+                                .requesterSocket
+                                .send(
+                                    JSON.stringify({
+                                        type:
+                                            "deleteResult",
+                                        requestId,
+                                        blockId:
+                                            deleteRequest.blockId,
+                                        deleted:
+                                            false,
+                                        reason:
+                                            "Delete request rejected"
+                                    })
+                                );
+                        }
+
+                        // --------------------------------
+                        // Tell owner
+                        // --------------------------------
+
+                        socket.send(
+                            JSON.stringify({
+                                type:
+                                    "deleteResult",
+                                requestId,
+                                blockId:
+                                    deleteRequest.blockId,
+                                deleted:
+                                    false,
+                                reason:
+                                    "Delete request rejected"
+                            })
+                        );
+
+                        console.log(
+                            "DELETE REJECTED:",
+                            requestId,
+                            "block:",
+                            deleteRequest.blockId,
+                            "rejected by:",
                             userId
                         );
 
@@ -717,10 +1559,6 @@ ws.on(
                             return;
                         }
 
-                        // --------------------------------
-                        // Convert cursor values
-                        // --------------------------------
-
                         const cursorPosition =
                             Number(
                                 controlMessage.cursorPosition
@@ -735,10 +1573,6 @@ ws.on(
                             Number(
                                 controlMessage.selectionEnd
                             );
-
-                        // --------------------------------
-                        // Validate cursor values
-                        // --------------------------------
 
                         if (
                             !Number.isFinite(
@@ -760,47 +1594,26 @@ ws.on(
                             return;
                         }
 
-                        // ====================================
-                        // Create Cursor Message
-                        // ====================================
-
                         const cursorMessage =
                             JSON.stringify({
-
                                 type:
                                     "cursor",
-
                                 userId,
-
                                 blockId,
-
                                 cursorPosition,
-
                                 selectionStart,
-
                                 selectionEnd
-
                             });
-
-                        // ====================================
-                        // Broadcast Cursor
-                        // ====================================
 
                         documentClients?.forEach(
                             (
                                 client
                             ) => {
 
-                                // ----------------------------
-                                // Do not send cursor back to
-                                // the same user
-                                // ----------------------------
-
                                 if (
                                     client ===
                                     socket
                                 ) {
-
                                     return;
                                 }
 
@@ -838,9 +1651,9 @@ ws.on(
                     return;
                 }
 
-                // ====================================
+                // ========================================
                 // BINARY YJS UPDATE
-                // ====================================
+                // ========================================
 
                 console.log(
                     "Yjs update received for document:",
@@ -852,137 +1665,294 @@ ws.on(
                         message as Buffer
                     );
 
-                // --------------------------------
-                // Save state before applying update
-                // --------------------------------
+                try {
 
-                const stateBefore =
-                    Y.encodeStateVector(
-                        ydoc!
-                    );
+                    // ========================================
+                    // Find which blocks were changed
+                    // ========================================
 
-                // --------------------------------
-                // Apply incoming Yjs update
-                // --------------------------------
-
-                Y.applyUpdate(
-                    ydoc!,
-                    update
-                );
-
-                // ========================================
-                // Sanitize Collaborative Block Content
-                // ========================================
-
-                const blocks =
-                    ydoc!.getMap<Y.Text>(
-                        "blocks"
-                    );
-
-                ydoc!.transact(
-                    () => {
-
-                        blocks.forEach(
-                            (
-                                yText,
-                                blockId
-                            ) => {
-
-                                // --------------------------------
-                                // Make sure this is a Y.Text
-                                // --------------------------------
-
-                                if (
-                                    !(yText instanceof Y.Text)
-                                ) {
-
-                                    return;
-                                }
-
-                                // --------------------------------
-                                // Get current content
-                                // --------------------------------
-
-                                const currentContent =
-                                    yText.toString();
-
-                                // --------------------------------
-                                // Sanitize content
-                                // --------------------------------
-
-                                const sanitizedContent =
-                                    sanitizeBlockContent(
-                                        currentContent
-                                    );
-
-                                // --------------------------------
-                                // Replace unsafe content
-                                // --------------------------------
-
-                                if (
-                                    currentContent !==
-                                    sanitizedContent
-                                ) {
-
-                                    yText.delete(
-                                        0,
-                                        yText.length
-                                    );
-
-                                    yText.insert(
-                                        0,
-                                        sanitizedContent
-                                    );
-
-                                    console.log(
-                                        "Sanitized block:",
-                                        blockId
-                                    );
-                                }
-                            }
+                    const changedBlockIds =
+                        getChangedBlockIds(
+                            ydoc!,
+                            update
                         );
-                    }
-                );
 
-                // --------------------------------
-                // Create final sanitized update
-                // --------------------------------
-
-                const sanitizedUpdate =
-                    Y.encodeStateAsUpdate(
-                        ydoc!,
-                        stateBefore
+                    console.log(
+                        "Changed blocks:",
+                        changedBlockIds
                     );
-                scheduleDocumentSave(
-                    documentId,
-                    ydoc!
-                );
 
-                // --------------------------------
-                // Broadcast update
-                // --------------------------------
+                    // ========================================
+                    // Get current block locks
+                    // ========================================
 
-                if (
-                    sanitizedUpdate.length > 0
-                ) {
+                    const blockLocks =
+                        ydoc!.getMap<string>(
+                            "blockLocks"
+                        );
 
-                    documentClients?.forEach(
-                        (
-                            client
-                        ) => {
+                    // ========================================
+                    // Create temporary document
+                    // ========================================
+
+                    const tempDoc = new Y.Doc();
+
+                    const currentState =
+                        Y.encodeStateAsUpdate(
+                            ydoc!
+                        );
+
+                    Y.applyUpdate(
+                        tempDoc,
+                        currentState
+                    );
+
+                    // Apply client's update ONLY
+                    // to the temporary document
+                    Y.applyUpdate(
+                        tempDoc,
+                        update
+                    );
+
+                    // ========================================
+                    // SECURITY CHECK
+                    // Client cannot modify blockLocks
+                    // directly.
+                    // ========================================
+
+                    const tempBlockLocks =
+                        tempDoc.getMap<string>(
+                            "blockLocks"
+                        );
+
+                    let lockMapChanged = false;
+
+                    // Check existing locks
+                    blockLocks.forEach(
+                        (owner, blockId) => {
 
                             if (
-                                client.readyState ===
-                                WebSocket.OPEN
+                                tempBlockLocks.get(blockId) !==
+                                owner
                             ) {
-
-                                client.send(
-                                    sanitizedUpdate
-                                );
+                                lockMapChanged = true;
                             }
                         }
                     );
+
+                    // Check newly added locks
+                    tempBlockLocks.forEach(
+                        (owner, blockId) => {
+
+                            if (
+                                blockLocks.get(blockId) !==
+                                owner
+                            ) {
+                                lockMapChanged = true;
+                            }
+                        }
+                    );
+
+                    if (lockMapChanged) {
+
+                        console.log(
+                            "YJS UPDATE REJECTED:",
+                            "Client attempted to modify blockLocks"
+                        );
+
+                        socket.send(
+                            JSON.stringify({
+                                type:
+                                    "updateRejected",
+                                reason:
+                                    "Block locks can only be changed through lock/unlock requests"
+                            })
+                        );
+
+                        return;
+                    }
+
+                    // ========================================
+                    // SERVER-AUTHORITATIVE LOCK CHECK
+                    // ========================================
+
+                    for (
+                        const blockId of changedBlockIds
+                    ) {
+
+                        const lockOwner =
+                            blockLocks.get(blockId);
+
+                        // ------------------------------------
+                        // Block is locked by another user
+                        // ------------------------------------
+
+                        if (
+                            lockOwner &&
+                            lockOwner !== userId
+                        ) {
+
+                            console.log(
+                                "YJS UPDATE REJECTED:",
+                                "Block:",
+                                blockId,
+                                "Locked by:",
+                                lockOwner,
+                                "Requester:",
+                                userId
+                            );
+
+                            const authoritativeBlock =
+                                ydoc!
+                                    .getMap<Y.Text>("blocks")
+                                    .get(blockId);
+
+                            socket.send(
+                                JSON.stringify({
+                                    type:
+                                        "updateRejected",
+                                    blockId,
+                                    reason:
+                                        "Block is locked by another user",
+                                    lockedBy:
+                                        lockOwner,
+                                    content:
+                                        authoritativeBlock instanceof Y.Text
+                                            ? authoritativeBlock.toString()
+                                            : ""
+                                })
+                            );
+
+                            return;
+                        }
+                    }
+
+                    // ========================================
+                    // UPDATE AUTHORIZED
+                    // ========================================
+
+                    const stateBefore =
+                        Y.encodeStateVector(
+                            ydoc!
+                        );
+
+                    // ========================================
+                    // Apply update to real Yjs document
+                    // ========================================
+
+                    Y.applyUpdate(
+                        ydoc!,
+                        update
+                    );
+
+                    // ========================================
+                    // Sanitize Collaborative Block Content
+                    // ========================================
+
+                    const blocks =
+                        ydoc!.getMap<Y.Text>(
+                            "blocks"
+                        );
+
+                    ydoc!.transact(
+                        () => {
+
+                            blocks.forEach(
+                                (
+                                    yText,
+                                    blockId
+                                ) => {
+
+                                    if (
+                                        !(yText instanceof Y.Text)
+                                    ) {
+                                        return;
+                                    }
+
+                                    const currentContent =
+                                        yText.toString();
+
+                                    const sanitizedContent =
+                                        sanitizeBlockContent(
+                                            currentContent
+                                        );
+
+                                    if (
+                                        currentContent !==
+                                        sanitizedContent
+                                    ) {
+
+                                        yText.delete(
+                                            0,
+                                            yText.length
+                                        );
+
+                                        yText.insert(
+                                            0,
+                                            sanitizedContent
+                                        );
+
+                                        console.log(
+                                            "Sanitized block:",
+                                            blockId
+                                        );
+                                    }
+                                }
+                            );
+                        }
+                    );
+
+                    // ========================================
+                    // Generate final update
+                    // ========================================
+
+                    const sanitizedUpdate =
+                        Y.encodeStateAsUpdate(
+                            ydoc!,
+                            stateBefore
+                        );
+
+                    // ========================================
+                    // Save document
+                    // ========================================
+
+                    scheduleDocumentSave(
+                        documentId,
+                        ydoc!
+                    );
+
+                    // ========================================
+                    // Broadcast authorized update
+                    // ========================================
+
+                    broadcastUpdate(
+                        documentClients,
+                        sanitizedUpdate
+                    );
+
+                    console.log(
+                        "Yjs update accepted:",
+                        documentId,
+                        "by",
+                        userId
+                    );
+
+                } catch (error) {
+
+                    console.error(
+                        "Failed to process Yjs update:",
+                        error
+                    );
+
+                    socket.send(
+                        JSON.stringify({
+                            type: "updateRejected",
+                            reason:
+                                "Invalid Yjs update"
+                        })
+                    );
                 }
+
             }
         );
 
@@ -1001,11 +1971,72 @@ ws.on(
                 );
 
                 // --------------------------------
+                // Remove pending delete requests
+                // --------------------------------
+
+                deleteRequests.forEach(
+                    (
+                        deleteRequest,
+                        requestId
+                    ) => {
+
+                        if (
+                            deleteRequest
+                                .requesterSocket ===
+                            socket ||
+                            deleteRequest
+                                .ownerId ===
+                            userId
+                        ) {
+
+                            deleteRequests.delete(
+                                requestId
+                            );
+
+                            if (
+                                deleteRequest
+                                    .requesterSocket !==
+                                socket &&
+                                deleteRequest
+                                    .requesterSocket
+                                    .readyState ===
+                                WebSocket.OPEN
+                            ) {
+
+                                deleteRequest
+                                    .requesterSocket
+                                    .send(
+                                        JSON.stringify({
+                                            type:
+                                                "deleteResult",
+                                            requestId,
+                                            blockId:
+                                                deleteRequest.blockId,
+                                            deleted:
+                                                false,
+                                            reason:
+                                                "Delete request cancelled because a user disconnected"
+                                        })
+                                    );
+                            }
+                        }
+                    }
+                );
+
+                // --------------------------------
                 // Remove client
                 // --------------------------------
 
                 documentClients?.delete(
                     socket
+                );
+
+                clientUsers.delete(
+                    socket
+                );
+
+                broadcastCollaborators(
+                    documentId
                 );
 
                 // ====================================
@@ -1014,12 +2045,9 @@ ws.on(
 
                 const cursorRemovedMessage =
                     JSON.stringify({
-
                         type:
                             "cursorRemoved",
-
                         userId
-
                     });
 
                 documentClients?.forEach(
@@ -1049,7 +2077,7 @@ ws.on(
                     );
 
                 const stateBefore =
-                    Y.encodeStateVector(
+                    Y.encodeStateAsUpdate(
                         ydoc!
                     );
 
@@ -1076,41 +2104,16 @@ ws.on(
                     }
                 );
 
-                // --------------------------------
-                // Create cleanup update
-                // --------------------------------
-
                 const lockCleanupUpdate =
                     Y.encodeStateAsUpdate(
                         ydoc!,
                         stateBefore
                     );
 
-                // --------------------------------
-                // Broadcast cleanup
-                // --------------------------------
-
-                if (
-                    lockCleanupUpdate.length > 0
-                ) {
-
-                    documentClients?.forEach(
-                        (
-                            client
-                        ) => {
-
-                            if (
-                                client.readyState ===
-                                WebSocket.OPEN
-                            ) {
-
-                                client.send(
-                                    lockCleanupUpdate
-                                );
-                            }
-                        }
-                    );
-                }
+                broadcastUpdate(
+                    documentClients,
+                    lockCleanupUpdate
+                );
 
                 // ====================================
                 // Remove empty client collection
@@ -1142,6 +2145,7 @@ ws.on(
                 );
             }
         );
+
     }
 );
 

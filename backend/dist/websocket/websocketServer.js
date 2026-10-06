@@ -32,10 +32,15 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 const ws_1 = require("ws");
+const user_js_1 = __importDefault(require("../models/user.js"));
 const Y = __importStar(require("yjs"));
 const sanitizationService_js_1 = require("../services/sanitizationService.js");
+const Document_js_1 = __importDefault(require("../models/Document.js"));
 // ========================================
 // Yjs Documents
 // ========================================
@@ -44,6 +49,230 @@ const documents = new Map();
 // Connected Clients
 // ========================================
 const clients = new Map();
+// ========================================
+// Client User IDs
+// ========================================
+const clientUsers = new Map();
+const broadcastCollaborators = async (documentId) => {
+    const documentClients = clients.get(documentId);
+    if (!documentClients) {
+        return;
+    }
+    const userIds = new Set();
+    documentClients.forEach((client) => {
+        const connectedUser = clientUsers.get(client);
+        if (connectedUser) {
+            userIds.add(connectedUser);
+        }
+    });
+    const users = await user_js_1.default.find({
+        _id: {
+            $in: Array.from(userIds)
+        }
+    }, {
+        name: 1
+    }).lean();
+    const collaborators = Array.from(userIds).map((userId) => {
+        const user = users.find((item) => item._id.toString() ===
+            userId);
+        return {
+            id: userId,
+            name: user?.name ||
+                "Unknown User"
+        };
+    });
+    const message = JSON.stringify({
+        type: "collaborators",
+        users: collaborators,
+        count: collaborators.length
+    });
+    documentClients.forEach((client) => {
+        if (client.readyState ===
+            ws_1.WebSocket.OPEN) {
+            client.send(message);
+        }
+    });
+    console.log("COLLABORATORS:", documentId, collaborators);
+};
+const deleteRequests = new Map();
+// ========================================
+// MongoDB Auto-Save
+// ========================================
+const saveTimers = new Map();
+const persistDocumentToMongoDB = async (documentId, ydoc) => {
+    try {
+        const blocks = ydoc.getMap("blocks");
+        const blockTypes = ydoc.getMap("blockTypes");
+        const blockOrder = ydoc.getArray("blockOrder");
+        const orderedIds = blockOrder.toArray();
+        const uniqueBlockIds = Array.from(new Set(orderedIds));
+        const mongoBlocks = [];
+        for (const blockId of uniqueBlockIds) {
+            const yText = blocks.get(blockId);
+            if (!yText ||
+                !(yText instanceof Y.Text)) {
+                continue;
+            }
+            const blockType = blockTypes.get(blockId) ||
+                "paragraph";
+            const rawContent = yText.toString();
+            const content = (0, sanitizationService_js_1.sanitizeBlockContent)(rawContent);
+            mongoBlocks.push({
+                _id: blockId,
+                type: blockType,
+                content,
+                children: []
+            });
+        }
+        const document = await Document_js_1.default.findByIdAndUpdate(documentId, {
+            $set: {
+                blocks: mongoBlocks
+            }
+        }, {
+            new: true,
+            runValidators: true
+        });
+        if (!document) {
+            console.error("DOCUMENT NOT FOUND:", documentId);
+            return;
+        }
+        console.log("DOCUMENT AUTO-SAVED TO MONGODB:", documentId);
+        console.log("MONGODB BLOCK COUNT:", mongoBlocks.length);
+    }
+    catch (error) {
+        console.error("FAILED TO AUTO-SAVE DOCUMENT:", documentId);
+        console.error(error);
+    }
+};
+const scheduleDocumentSave = (documentId, ydoc) => {
+    const existingTimer = saveTimers.get(documentId);
+    if (existingTimer) {
+        clearTimeout(existingTimer);
+    }
+    const timer = setTimeout(async () => {
+        saveTimers.delete(documentId);
+        await persistDocumentToMongoDB(documentId, ydoc);
+    }, 500);
+    saveTimers.set(documentId, timer);
+};
+// ========================================
+// Validate Yjs Block Update
+// ========================================
+const getChangedBlockIds = (currentDoc, incomingUpdate) => {
+    // ----------------------------------------
+    // Create temporary document
+    // ----------------------------------------
+    const tempDoc = new Y.Doc();
+    // Copy current server state
+    const currentState = Y.encodeStateAsUpdate(currentDoc);
+    Y.applyUpdate(tempDoc, currentState);
+    // ----------------------------------------
+    // Apply incoming update to temporary doc
+    // ----------------------------------------
+    Y.applyUpdate(tempDoc, incomingUpdate);
+    // ----------------------------------------
+    // Get current and updated blocks
+    // ----------------------------------------
+    const currentBlocks = currentDoc.getMap("blocks");
+    const updatedBlocks = tempDoc.getMap("blocks");
+    const changedBlockIds = new Set();
+    // ----------------------------------------
+    // Check existing blocks
+    // ----------------------------------------
+    currentBlocks.forEach((currentText, blockId) => {
+        const updatedText = updatedBlocks.get(blockId);
+        if (!(currentText instanceof Y.Text) ||
+            !(updatedText instanceof Y.Text)) {
+            return;
+        }
+        if (currentText.toString() !==
+            updatedText.toString()) {
+            changedBlockIds.add(blockId);
+        }
+    });
+    // ----------------------------------------
+    // Check newly created blocks
+    // ----------------------------------------
+    updatedBlocks.forEach((updatedText, blockId) => {
+        if (!currentBlocks.has(blockId)) {
+            changedBlockIds.add(blockId);
+        }
+    });
+    // ----------------------------------------
+    // Check deleted blocks
+    // ----------------------------------------
+    currentBlocks.forEach((_currentText, blockId) => {
+        if (!updatedBlocks.has(blockId)) {
+            changedBlockIds.add(blockId);
+        }
+    });
+    return Array.from(changedBlockIds);
+};
+// ========================================
+// Broadcast Yjs Update
+// ========================================
+const broadcastUpdate = (documentClients, update) => {
+    if (!documentClients ||
+        update.length === 0) {
+        return;
+    }
+    documentClients.forEach((client) => {
+        if (client.readyState ===
+            ws_1.WebSocket.OPEN) {
+            client.send(update);
+        }
+    });
+};
+// ========================================
+// Delete Block
+// ========================================
+const deleteBlockFromYjs = (ydoc, blockId) => {
+    const stateBefore = Y.encodeStateVector(ydoc);
+    const blocks = ydoc.getMap("blocks");
+    const blockTypes = ydoc.getMap("blockTypes");
+    const blockOrder = ydoc.getArray("blockOrder");
+    ydoc.transact(() => {
+        // --------------------------------
+        // Remove block content
+        // --------------------------------
+        blocks.delete(blockId);
+        // --------------------------------
+        // Remove block type
+        // --------------------------------
+        blockTypes.delete(blockId);
+        // --------------------------------
+        // Remove block from order
+        // --------------------------------
+        const order = blockOrder.toArray();
+        const index = order.indexOf(blockId);
+        if (index !== -1) {
+            blockOrder.delete(index, 1);
+        }
+        // --------------------------------
+        // Remove block lock
+        // --------------------------------
+        const blockLocks = ydoc.getMap("blockLocks");
+        blockLocks.delete(blockId);
+    });
+    return Y.encodeStateAsUpdate(ydoc, stateBefore);
+};
+// ========================================
+// Find Socket By User ID
+// ========================================
+const findClientByUserId = (documentId, userId) => {
+    const documentClients = clients.get(documentId);
+    if (!documentClients) {
+        return null;
+    }
+    for (const client of documentClients) {
+        const clientUserId = clientUsers.get(client);
+        if (clientUserId ===
+            userId) {
+            return client;
+        }
+    }
+    return null;
+};
 // ========================================
 // WebSocket Server
 // ========================================
@@ -54,15 +283,15 @@ const ws = new ws_1.WebSocketServer({
 // Client Connection
 // ========================================
 ws.on("connection", (socket, request) => {
-    // ========================================
-    // Get URL Information
-    // ========================================
+    // --------------------------------
+    // Get URL information
+    // --------------------------------
     const url = new URL(request.url || "", "http://localhost");
     const documentId = url.pathname.split("/")[2];
     const userId = url.searchParams.get("userId");
-    // ========================================
-    // Validate Connection
-    // ========================================
+    // --------------------------------
+    // Validate connection
+    // --------------------------------
     if (!documentId ||
         !userId) {
         socket.close();
@@ -70,8 +299,9 @@ ws.on("connection", (socket, request) => {
     }
     console.log("Client connected:", documentId, userId);
     // ========================================
-    // Get Or Create Yjs Document
+    // Get or Create Yjs Document
     // ========================================
+    const isNewDocument = !documents.has(documentId);
     let ydoc = documents.get(documentId);
     if (!ydoc) {
         ydoc =
@@ -79,27 +309,19 @@ ws.on("connection", (socket, request) => {
         documents.set(documentId, ydoc);
     }
     // ========================================
-    // Send Existing Yjs State
+    // Send Initial Document State
     // ========================================
-    const currentState = Y.encodeStateAsUpdate(ydoc);
-    if (currentState.length > 0) {
-        socket.send(currentState);
+    if (isNewDocument) {
+        socket.send(JSON.stringify({
+            type: "initialize"
+        }));
     }
-    // ========================================
-    // Always Request MongoDB Initialization
-    // ========================================
-    //
-    // This is important.
-    //
-    // MongoDB may contain blocks while
-    // the in-memory Yjs document is empty.
-    //
-    // The client will restore only blocks
-    // that are missing from Yjs.
-    //
-    socket.send(JSON.stringify({
-        type: "initialize"
-    }));
+    else {
+        const currentState = Y.encodeStateAsUpdate(ydoc);
+        if (currentState.length > 0) {
+            socket.send(currentState);
+        }
+    }
     // ========================================
     // Add Client
     // ========================================
@@ -110,6 +332,8 @@ ws.on("connection", (socket, request) => {
         clients.set(documentId, documentClients);
     }
     documentClients.add(socket);
+    clientUsers.set(socket, userId);
+    broadcastCollaborators(documentId);
     // ========================================
     // Receive Messages
     // ========================================
@@ -128,7 +352,7 @@ ws.on("connection", (socket, request) => {
                 return;
             }
             // ====================================
-            // LOCK
+            // LOCK REQUEST
             // ====================================
             if (controlMessage.type ===
                 "lock") {
@@ -138,23 +362,18 @@ ws.on("connection", (socket, request) => {
                 }
                 const blockLocks = ydoc.getMap("blockLocks");
                 const currentOwner = blockLocks.get(blockId);
-                // --------------------------------
-                // Already locked by another user
-                // --------------------------------
                 if (currentOwner &&
-                    currentOwner !== userId) {
+                    currentOwner !==
+                        userId) {
                     socket.send(JSON.stringify({
                         type: "lockResult",
                         blockId,
                         granted: false,
                         lockedBy: currentOwner
                     }));
-                    console.log("LOCK DENIED:", blockId, "owned by:", currentOwner);
+                    console.log("LOCK DENIED:", blockId, "already owned by", currentOwner);
                     return;
                 }
-                // --------------------------------
-                // Already owned by this user
-                // --------------------------------
                 if (currentOwner ===
                     userId) {
                     socket.send(JSON.stringify({
@@ -163,47 +382,26 @@ ws.on("connection", (socket, request) => {
                         granted: true,
                         lockedBy: userId
                     }));
+                    console.log("LOCK ALREADY OWNED:", blockId, "by", userId);
                     return;
                 }
-                // --------------------------------
-                // State before lock
-                // --------------------------------
                 const stateBefore = Y.encodeStateVector(ydoc);
-                // --------------------------------
-                // Acquire lock
-                // --------------------------------
                 ydoc.transact(() => {
                     blockLocks.set(blockId, userId);
                 });
-                // --------------------------------
-                // Create update
-                // --------------------------------
                 const lockUpdate = Y.encodeStateAsUpdate(ydoc, stateBefore);
-                // --------------------------------
-                // Tell requester
-                // --------------------------------
                 socket.send(JSON.stringify({
                     type: "lockResult",
                     blockId,
                     granted: true,
                     lockedBy: userId
                 }));
-                // --------------------------------
-                // Broadcast lock
-                // --------------------------------
-                if (lockUpdate.length > 0) {
-                    documentClients?.forEach((client) => {
-                        if (client.readyState ===
-                            ws_1.WebSocket.OPEN) {
-                            client.send(lockUpdate);
-                        }
-                    });
-                }
-                console.log("LOCK ACQUIRED:", blockId, "by:", userId);
+                broadcastUpdate(documentClients, lockUpdate);
+                console.log("LOCK ACQUIRED:", blockId, "by", userId);
                 return;
             }
             // ====================================
-            // UNLOCK
+            // UNLOCK REQUEST
             // ====================================
             if (controlMessage.type ===
                 "unlock") {
@@ -213,9 +411,6 @@ ws.on("connection", (socket, request) => {
                 }
                 const blockLocks = ydoc.getMap("blockLocks");
                 const currentOwner = blockLocks.get(blockId);
-                // --------------------------------
-                // Only owner can unlock
-                // --------------------------------
                 if (currentOwner !==
                     userId) {
                     socket.send(JSON.stringify({
@@ -223,73 +418,312 @@ ws.on("connection", (socket, request) => {
                         blockId,
                         released: false
                     }));
-                    console.log("UNLOCK DENIED:", blockId);
+                    console.log("UNLOCK DENIED:", blockId, "owner:", currentOwner, "requester:", userId);
                     return;
                 }
-                // --------------------------------
-                // State before unlock
-                // --------------------------------
                 const stateBefore = Y.encodeStateVector(ydoc);
-                // --------------------------------
-                // Release lock
-                // --------------------------------
                 ydoc.transact(() => {
                     blockLocks.delete(blockId);
                 });
-                // --------------------------------
-                // Create update
-                // --------------------------------
                 const unlockUpdate = Y.encodeStateAsUpdate(ydoc, stateBefore);
-                // --------------------------------
-                // Tell requester
-                // --------------------------------
                 socket.send(JSON.stringify({
                     type: "unlockResult",
                     blockId,
                     released: true
                 }));
-                // --------------------------------
-                // Broadcast unlock
-                // --------------------------------
-                if (unlockUpdate.length > 0) {
-                    documentClients?.forEach((client) => {
-                        if (client.readyState ===
-                            ws_1.WebSocket.OPEN) {
-                            client.send(unlockUpdate);
-                        }
-                    });
-                }
-                console.log("LOCK RELEASED:", blockId, "by:", userId);
+                broadcastUpdate(documentClients, unlockUpdate);
+                console.log("LOCK RELEASED:", blockId, "by", userId);
                 return;
             }
             // ====================================
-            // REMOTE CURSOR
+            // REQUEST DELETE
+            // ====================================
+            if (controlMessage.type ===
+                "request-delete") {
+                const blockId = controlMessage.blockId;
+                if (!blockId) {
+                    return;
+                }
+                const blocks = ydoc.getMap("blocks");
+                if (!blocks.has(blockId)) {
+                    socket.send(JSON.stringify({
+                        type: "deleteResult",
+                        blockId,
+                        deleted: false,
+                        reason: "Block does not exist"
+                    }));
+                    return;
+                }
+                const blockLocks = ydoc.getMap("blockLocks");
+                const lockOwner = blockLocks.get(blockId);
+                // --------------------------------
+                // No lock
+                // --------------------------------
+                if (!lockOwner) {
+                    const deleteUpdate = deleteBlockFromYjs(ydoc, blockId);
+                    scheduleDocumentSave(documentId, ydoc);
+                    broadcastUpdate(documentClients, deleteUpdate);
+                    socket.send(JSON.stringify({
+                        type: "deleteResult",
+                        blockId,
+                        deleted: true
+                    }));
+                    console.log("BLOCK DELETED:", blockId, "by", userId);
+                    return;
+                }
+                // --------------------------------
+                // Current user owns lock
+                // --------------------------------
+                if (lockOwner ===
+                    userId) {
+                    const deleteUpdate = deleteBlockFromYjs(ydoc, blockId);
+                    scheduleDocumentSave(documentId, ydoc);
+                    broadcastUpdate(documentClients, deleteUpdate);
+                    socket.send(JSON.stringify({
+                        type: "deleteResult",
+                        blockId,
+                        deleted: true
+                    }));
+                    console.log("BLOCK DELETED BY LOCK OWNER:", blockId, "by", userId);
+                    return;
+                }
+                // --------------------------------
+                // Block belongs to another user
+                // --------------------------------
+                const ownerSocket = findClientByUserId(documentId, lockOwner);
+                if (!ownerSocket) {
+                    socket.send(JSON.stringify({
+                        type: "deleteResult",
+                        blockId,
+                        deleted: false,
+                        reason: "Block owner is not connected"
+                    }));
+                    return;
+                }
+                // --------------------------------
+                // Create delete request
+                // --------------------------------
+                const requestId = crypto.randomUUID();
+                deleteRequests.set(requestId, {
+                    requestId,
+                    documentId,
+                    blockId,
+                    requesterId: userId,
+                    ownerId: lockOwner,
+                    requesterSocket: socket
+                });
+                // --------------------------------
+                // Tell block owner
+                // --------------------------------
+                ownerSocket.send(JSON.stringify({
+                    type: "delete-request",
+                    requestId,
+                    blockId,
+                    requesterId: userId
+                }));
+                // --------------------------------
+                // Tell requester
+                // --------------------------------
+                socket.send(JSON.stringify({
+                    type: "delete-pending",
+                    requestId,
+                    blockId,
+                    ownerId: lockOwner
+                }));
+                console.log("DELETE REQUEST CREATED:", requestId, "block:", blockId, "requester:", userId, "owner:", lockOwner);
+                return;
+            }
+            // ====================================
+            // APPROVE DELETE
+            // ====================================
+            if (controlMessage.type ===
+                "approve-delete") {
+                const requestId = controlMessage.requestId;
+                if (!requestId) {
+                    return;
+                }
+                const deleteRequest = deleteRequests.get(requestId);
+                if (!deleteRequest) {
+                    socket.send(JSON.stringify({
+                        type: "deleteResult",
+                        requestId,
+                        deleted: false,
+                        reason: "Delete request no longer exists"
+                    }));
+                    return;
+                }
+                // --------------------------------
+                // Only lock owner can approve
+                // --------------------------------
+                if (deleteRequest.ownerId !==
+                    userId) {
+                    socket.send(JSON.stringify({
+                        type: "deleteResult",
+                        requestId,
+                        deleted: false,
+                        reason: "Only the block owner can approve"
+                    }));
+                    return;
+                }
+                const blockLocks = ydoc.getMap("blockLocks");
+                const currentOwner = blockLocks.get(deleteRequest.blockId);
+                // --------------------------------
+                // Verify lock is still owned
+                // --------------------------------
+                if (currentOwner !==
+                    userId) {
+                    deleteRequests.delete(requestId);
+                    socket.send(JSON.stringify({
+                        type: "deleteResult",
+                        requestId,
+                        blockId: deleteRequest.blockId,
+                        deleted: false,
+                        reason: "Block lock is no longer owned by you"
+                    }));
+                    return;
+                }
+                // --------------------------------
+                // Delete block
+                // --------------------------------
+                const deleteUpdate = deleteBlockFromYjs(ydoc, deleteRequest.blockId);
+                deleteRequests.delete(requestId);
+                scheduleDocumentSave(documentId, ydoc);
+                // --------------------------------
+                // Broadcast deletion
+                // --------------------------------
+                broadcastUpdate(documentClients, deleteUpdate);
+                // --------------------------------
+                // Tell requester
+                // --------------------------------
+                if (deleteRequest
+                    .requesterSocket
+                    .readyState ===
+                    ws_1.WebSocket.OPEN) {
+                    deleteRequest
+                        .requesterSocket
+                        .send(JSON.stringify({
+                        type: "deleteResult",
+                        requestId,
+                        blockId: deleteRequest.blockId,
+                        deleted: true
+                    }));
+                }
+                // --------------------------------
+                // Tell owner
+                // --------------------------------
+                socket.send(JSON.stringify({
+                    type: "deleteResult",
+                    requestId,
+                    blockId: deleteRequest.blockId,
+                    deleted: true
+                }));
+                console.log("DELETE APPROVED:", requestId, "block:", deleteRequest.blockId, "approved by:", userId);
+                return;
+            }
+            // ====================================
+            // REJECT DELETE
+            // ====================================
+            if (controlMessage.type ===
+                "reject-delete") {
+                const requestId = controlMessage.requestId;
+                if (!requestId) {
+                    return;
+                }
+                const deleteRequest = deleteRequests.get(requestId);
+                if (!deleteRequest) {
+                    socket.send(JSON.stringify({
+                        type: "deleteResult",
+                        requestId,
+                        deleted: false,
+                        reason: "Delete request no longer exists"
+                    }));
+                    return;
+                }
+                // --------------------------------
+                // Only lock owner can reject
+                // --------------------------------
+                if (deleteRequest.ownerId !==
+                    userId) {
+                    socket.send(JSON.stringify({
+                        type: "deleteResult",
+                        requestId,
+                        deleted: false,
+                        reason: "Only the block owner can reject"
+                    }));
+                    return;
+                }
+                deleteRequests.delete(requestId);
+                // --------------------------------
+                // Tell requester
+                // --------------------------------
+                if (deleteRequest
+                    .requesterSocket
+                    .readyState ===
+                    ws_1.WebSocket.OPEN) {
+                    deleteRequest
+                        .requesterSocket
+                        .send(JSON.stringify({
+                        type: "deleteResult",
+                        requestId,
+                        blockId: deleteRequest.blockId,
+                        deleted: false,
+                        reason: "Delete request rejected"
+                    }));
+                }
+                // --------------------------------
+                // Tell owner
+                // --------------------------------
+                socket.send(JSON.stringify({
+                    type: "deleteResult",
+                    requestId,
+                    blockId: deleteRequest.blockId,
+                    deleted: false,
+                    reason: "Delete request rejected"
+                }));
+                console.log("DELETE REJECTED:", requestId, "block:", deleteRequest.blockId, "rejected by:", userId);
+                return;
+            }
+            // ====================================
+            // CURSOR POSITION
             // ====================================
             if (controlMessage.type ===
                 "cursor") {
-                const cursorMessage = {
+                const blockId = controlMessage.blockId;
+                if (!blockId) {
+                    return;
+                }
+                const cursorPosition = Number(controlMessage.cursorPosition);
+                const selectionStart = Number(controlMessage.selectionStart);
+                const selectionEnd = Number(controlMessage.selectionEnd);
+                if (!Number.isFinite(cursorPosition) ||
+                    !Number.isFinite(selectionStart) ||
+                    !Number.isFinite(selectionEnd)) {
+                    console.error("Invalid cursor position:", controlMessage);
+                    return;
+                }
+                const cursorMessage = JSON.stringify({
                     type: "cursor",
                     userId,
-                    blockId: controlMessage.blockId,
-                    cursorPosition: Number(controlMessage.cursorPosition ??
-                        0),
-                    selectionStart: Number(controlMessage.selectionStart ??
-                        0),
-                    selectionEnd: Number(controlMessage.selectionEnd ??
-                        0)
-                };
+                    blockId,
+                    cursorPosition,
+                    selectionStart,
+                    selectionEnd
+                });
                 documentClients?.forEach((client) => {
-                    if (client !==
-                        socket &&
-                        client.readyState ===
-                            ws_1.WebSocket.OPEN) {
-                        client.send(JSON.stringify(cursorMessage));
+                    if (client ===
+                        socket) {
+                        return;
+                    }
+                    if (client.readyState ===
+                        ws_1.WebSocket.OPEN) {
+                        client.send(cursorMessage);
                     }
                 });
+                console.log("CURSOR UPDATE:", userId, blockId, cursorPosition);
                 return;
             }
             // ====================================
-            // Unknown Control Message
+            // UNKNOWN CONTROL MESSAGE
             // ====================================
             console.log("Unknown control message:", controlMessage);
             return;
@@ -298,67 +732,88 @@ ws.on("connection", (socket, request) => {
         // BINARY YJS UPDATE
         // ====================================
         console.log("Yjs update received for document:", documentId);
-        try {
-            const update = new Uint8Array(message);
-            // --------------------------------
-            // State before update
-            // --------------------------------
-            const stateBefore = Y.encodeStateVector(ydoc);
-            // --------------------------------
-            // Apply update
-            // --------------------------------
-            Y.applyUpdate(ydoc, update);
-            // ========================================
-            // Sanitize Block Content
-            // ========================================
-            const sharedBlocks = ydoc.getMap("blocks");
-            ydoc.transact(() => {
-                sharedBlocks.forEach((yText, blockId) => {
-                    if (!(yText instanceof
-                        Y.Text)) {
-                        return;
-                    }
-                    const currentContent = yText.toString();
-                    const sanitizedContent = (0, sanitizationService_js_1.sanitizeBlockContent)(currentContent);
-                    if (currentContent !==
-                        sanitizedContent) {
-                        yText.delete(0, yText.length);
-                        yText.insert(0, sanitizedContent);
-                        console.log("Sanitized block:", blockId);
-                    }
-                });
+        const update = new Uint8Array(message);
+        const stateBefore = Y.encodeStateVector(ydoc);
+        Y.applyUpdate(ydoc, update);
+        // ========================================
+        // Sanitize Collaborative Block Content
+        // ========================================
+        const blocks = ydoc.getMap("blocks");
+        ydoc.transact(() => {
+            blocks.forEach((yText, blockId) => {
+                if (!(yText instanceof Y.Text)) {
+                    return;
+                }
+                const currentContent = yText.toString();
+                const sanitizedContent = (0, sanitizationService_js_1.sanitizeBlockContent)(currentContent);
+                if (currentContent !==
+                    sanitizedContent) {
+                    yText.delete(0, yText.length);
+                    yText.insert(0, sanitizedContent);
+                    console.log("Sanitized block:", blockId);
+                }
             });
-            // --------------------------------
-            // Create final update
-            // --------------------------------
-            const finalUpdate = Y.encodeStateAsUpdate(ydoc, stateBefore);
-            // --------------------------------
-            // Broadcast update
-            // --------------------------------
-            if (finalUpdate.length > 0) {
-                documentClients?.forEach((client) => {
-                    if (client.readyState ===
-                        ws_1.WebSocket.OPEN) {
-                        client.send(finalUpdate);
-                    }
-                });
-            }
-        }
-        catch (error) {
-            console.error("Failed to process Yjs update:", error);
-        }
+        });
+        const sanitizedUpdate = Y.encodeStateAsUpdate(ydoc, stateBefore);
+        scheduleDocumentSave(documentId, ydoc);
+        broadcastUpdate(documentClients, sanitizedUpdate);
     });
     // ========================================
-    // Client Disconnect
+    // Client Disconnected
     // ========================================
     socket.on("close", () => {
         console.log("Client disconnected:", documentId, userId);
         // --------------------------------
+        // Remove pending delete requests
+        // --------------------------------
+        deleteRequests.forEach((deleteRequest, requestId) => {
+            if (deleteRequest
+                .requesterSocket ===
+                socket ||
+                deleteRequest
+                    .ownerId ===
+                    userId) {
+                deleteRequests.delete(requestId);
+                if (deleteRequest
+                    .requesterSocket !==
+                    socket &&
+                    deleteRequest
+                        .requesterSocket
+                        .readyState ===
+                        ws_1.WebSocket.OPEN) {
+                    deleteRequest
+                        .requesterSocket
+                        .send(JSON.stringify({
+                        type: "deleteResult",
+                        requestId,
+                        blockId: deleteRequest.blockId,
+                        deleted: false,
+                        reason: "Delete request cancelled because a user disconnected"
+                    }));
+                }
+            }
+        });
+        // --------------------------------
         // Remove client
         // --------------------------------
         documentClients?.delete(socket);
+        clientUsers.delete(socket);
+        broadcastCollaborators(documentId);
         // ====================================
-        // Remove User Locks
+        // Remove remote cursor
+        // ====================================
+        const cursorRemovedMessage = JSON.stringify({
+            type: "cursorRemoved",
+            userId
+        });
+        documentClients?.forEach((client) => {
+            if (client.readyState ===
+                ws_1.WebSocket.OPEN) {
+                client.send(cursorRemovedMessage);
+            }
+        });
+        // ====================================
+        // Remove all locks owned by this user
         // ====================================
         const blockLocks = ydoc.getMap("blockLocks");
         const stateBefore = Y.encodeStateVector(ydoc);
@@ -370,24 +825,11 @@ ws.on("connection", (socket, request) => {
                 }
             });
         });
-        // --------------------------------
-        // Create cleanup update
-        // --------------------------------
-        const cleanupUpdate = Y.encodeStateAsUpdate(ydoc, stateBefore);
-        // --------------------------------
-        // Broadcast cleanup
-        // --------------------------------
-        if (cleanupUpdate.length > 0) {
-            documentClients?.forEach((client) => {
-                if (client.readyState ===
-                    ws_1.WebSocket.OPEN) {
-                    client.send(cleanupUpdate);
-                }
-            });
-        }
-        // --------------------------------
+        const lockCleanupUpdate = Y.encodeStateAsUpdate(ydoc, stateBefore);
+        broadcastUpdate(documentClients, lockCleanupUpdate);
+        // ====================================
         // Remove empty client collection
-        // --------------------------------
+        // ====================================
         if (documentClients &&
             documentClients.size === 0) {
             clients.delete(documentId);

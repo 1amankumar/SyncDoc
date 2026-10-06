@@ -17,6 +17,8 @@ interface BlockContextType {
 
     activeBlockId: string | null;
 
+    selectedBlockId: string | null;
+
     cursorPosition: number;
 
     selectionStart: number;
@@ -24,6 +26,10 @@ interface BlockContextType {
     selectionEnd: number;
 
     setActiveBlockId: (
+        blockId: string | null
+    ) => void;
+
+    setSelectedBlockId: (
         blockId: string | null
     ) => void;
 
@@ -78,6 +84,17 @@ export const BlockProvider = ({
     const [
         activeBlockId,
         setActiveBlockId
+    ] = useState<string | null>(
+        null
+    );
+
+    // ========================================
+    // Selected Block
+    // ========================================
+
+    const [
+        selectedBlockId,
+        setSelectedBlockId
     ] = useState<string | null>(
         null
     );
@@ -173,10 +190,12 @@ export const BlockProvider = ({
         <BlockContext.Provider
             value={{
                 activeBlockId,
+                selectedBlockId,
                 cursorPosition,
                 selectionStart,
                 selectionEnd,
                 setActiveBlockId,
+                setSelectedBlockId,
                 setCursorPosition,
                 setSelectionStart,
                 setSelectionEnd,

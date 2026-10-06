@@ -54,6 +54,9 @@ const blockSchema = new mongoose_1.Schema({
 }, {
     _id: false
 });
+// ========================================
+// Children
+// ========================================
 blockSchema.add({
     children: {
         type: [blockSchema],
@@ -79,19 +82,32 @@ const documentSchema = new mongoose_1.Schema({
 // ========================================
 // Validation
 // ========================================
-documentSchema.pre("save", async function () {
+documentSchema.pre("save", function () {
     const validateBlocks = (blocks) => {
         for (const block of blocks) {
+            // --------------------------------
+            // Block ID
+            // --------------------------------
             if (!block._id) {
                 throw new Error("Block ID is required");
             }
-            if (!block.type.trim()) {
+            // --------------------------------
+            // Block Type
+            // --------------------------------
+            if (!block.type ||
+                !block.type.trim()) {
                 throw new Error("Block type is required");
             }
+            // --------------------------------
+            // Block Content
+            // --------------------------------
             if (typeof block.content !==
                 "string") {
                 throw new Error("Block content must be a string");
             }
+            // --------------------------------
+            // Child Blocks
+            // --------------------------------
             if (block.children &&
                 block.children.length > 0) {
                 validateBlocks(block.children);

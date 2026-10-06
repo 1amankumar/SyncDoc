@@ -16,7 +16,9 @@ import {
     blockTypes,
     addBlock,
     isSyncReady,
-    onSyncReady
+    onSyncReady,
+    getCollaborators,
+    onCollaboratorsUpdate
 } from "../services/websocketService";
 
 import {
@@ -60,10 +62,44 @@ function DocumentPage({
     );
 
     // ========================================
+    // Collaborator State
+    // ========================================
+
+    const [
+        collaboratorState,
+        setCollaboratorState
+    ] = useState(
+        getCollaborators()
+    );
+
+    // ========================================
     // Block Context
     // ========================================
 
     useBlockContext();
+
+    // ========================================
+    // Collaborator Updates
+    // ========================================
+
+    useEffect(() => {
+
+        const removeListener =
+            onCollaboratorsUpdate(
+                (state) => {
+                    setCollaboratorState(
+                        state
+                    );
+                }
+            );
+
+        setCollaboratorState(
+            getCollaborators()
+        );
+
+        return removeListener;
+
+    }, []);
 
     // ========================================
     // Build Blocks From Yjs
@@ -129,12 +165,21 @@ function DocumentPage({
             // ====================================
             // Fallback for existing MongoDB blocks
             // ====================================
+            //
+            // Important:
+            // Do not restore old MongoDB blocks
+            // after Yjs synchronization has
+            // completed.
+            //
+            // This prevents deleted blocks from
+            // coming back into the UI.
+            // ====================================
 
             if (
                 newBlocks.length === 0 &&
-                document.blocks.length > 0
+                document.blocks.length > 0 &&
+                !isSyncReady()
             ) {
-
                 setCollaborativeBlocks(
                     document.blocks
                 );
@@ -279,7 +324,9 @@ function DocumentPage({
             );
         };
 
-    }, [document._id]);
+    }, [
+        document._id
+    ]);
 
     // ========================================
     // Handle Block Content Change
@@ -420,68 +467,174 @@ function DocumentPage({
 
                     </div>
 
-                    {/* Sync Status */}
+                    {/* Right Side Status */}
 
-                    <div>
+                    <div
+                        className="
+                            flex
+                            flex-col
+                            items-end
+                            gap-2
+                        "
+                    >
 
-                        {syncCompleted ? (
-                            <span
-                                className="
-                                    inline-flex
-                                    items-center
-                                    gap-2
-                                    rounded-full
-                                    bg-emerald-50
-                                    px-3
-                                    py-1.5
-                                    text-xs
-                                    font-semibold
-                                    text-emerald-700
-                                "
-                            >
+                        {/* Sync Status */}
+
+                        <div>
+
+                            {syncCompleted ? (
                                 <span
                                     className="
-                                        h-2
-                                        w-2
+                                        inline-flex
+                                        items-center
+                                        gap-2
                                         rounded-full
-                                        bg-emerald-500
+                                        bg-emerald-50
+                                        px-3
+                                        py-1.5
+                                        text-xs
+                                        font-semibold
+                                        text-emerald-700
                                     "
-                                />
+                                >
+                                    <span
+                                        className="
+                                            h-2
+                                            w-2
+                                            rounded-full
+                                            bg-emerald-500
+                                        "
+                                    />
 
-                                Synced
-                            </span>
-                        ) : (
-                            <span
-                                className="
-                                    inline-flex
-                                    items-center
-                                    gap-2
-                                    rounded-full
-                                    bg-amber-50
-                                    px-3
-                                    py-1.5
-                                    text-xs
-                                    font-semibold
-                                    text-amber-700
-                                "
-                            >
+                                    Synced
+                                </span>
+                            ) : (
                                 <span
                                     className="
-                                        h-2
-                                        w-2
-                                        animate-pulse
+                                        inline-flex
+                                        items-center
+                                        gap-2
                                         rounded-full
-                                        bg-amber-500
+                                        bg-amber-50
+                                        px-3
+                                        py-1.5
+                                        text-xs
+                                        font-semibold
+                                        text-amber-700
                                     "
-                                />
+                                >
+                                    <span
+                                        className="
+                                            h-2
+                                            w-2
+                                            animate-pulse
+                                            rounded-full
+                                            bg-amber-500
+                                        "
+                                    />
 
-                                Syncing
+                                    Syncing
+                                </span>
+                            )}
+
+                        </div>
+
+                        {/* Collaborator Count */}
+
+                        <div
+                            className="
+                                inline-flex
+                                items-center
+                                gap-2
+                                rounded-full
+                                bg-slate-100
+                                px-3
+                                py-1.5
+                                text-xs
+                                font-semibold
+                                text-slate-600
+                            "
+                        >
+
+                            <span>
+                                👥
                             </span>
-                        )}
+
+                            <span>
+                                {collaboratorState.count}{" "}
+                                {collaboratorState.count === 1
+                                    ? "user"
+                                    : "users"}
+                            </span>
+
+                        </div>
 
                     </div>
 
                 </div>
+
+                {/* ================================== */}
+                {/* Collaborator Names */}
+                {/* ================================== */}
+
+                {collaboratorState.count > 0 && (
+                    <div
+                        className="
+                            mt-4
+                            flex
+                            flex-wrap
+                            items-center
+                            gap-2
+                        "
+                    >
+
+                        {collaboratorState.users.map(
+                            (user) => (
+                                <div
+                                    key={user.id}
+                                    className="
+                                        inline-flex
+                                        items-center
+                                        gap-2
+                                        rounded-full
+                                        bg-blue-50
+                                        px-3
+                                        py-1.5
+                                        text-xs
+                                        font-medium
+                                        text-blue-700
+                                    "
+                                >
+
+                                    <span
+                                        className="
+                                            flex
+                                            h-5
+                                            w-5
+                                            items-center
+                                            justify-center
+                                            rounded-full
+                                            bg-blue-100
+                                            text-[10px]
+                                            font-bold
+                                            text-blue-700
+                                        "
+                                    >
+                                        {user.name
+                                            .charAt(0)
+                                            .toUpperCase()}
+                                    </span>
+
+                                    <span>
+                                        {user.name}
+                                    </span>
+
+                                </div>
+                            )
+                        )}
+
+                    </div>
+                )}
 
             </div>
 
@@ -642,6 +795,7 @@ function DocumentPage({
 
                 {syncCompleted && (
                     <>
+
                         {/* ================================ */}
                         {/* Empty Document */}
                         {/* ================================ */}

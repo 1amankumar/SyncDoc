@@ -4,8 +4,6 @@ import type {
     Block
 } from "../types/document";
 
-
-
 // ========================================
 // Yjs Document
 // ========================================
@@ -160,6 +158,53 @@ export interface RemoteCursor {
 
     selectionEnd: number;
 }
+export interface Collaborator {
+    id: string;
+    name: string;
+}
+
+export interface CollaboratorState {
+    users: Collaborator[];
+    count: number;
+}
+
+let collaborators: CollaboratorState = {
+    users: [],
+    count: 0
+};
+
+export const getCollaborators =
+    (): CollaboratorState => {
+        return collaborators;
+    };
+
+export const onCollaboratorsUpdate = (
+    callback: (
+        state: CollaboratorState
+    ) => void
+) => {
+    const handleUpdate =
+        (event: Event) => {
+            const customEvent =
+                event as CustomEvent<CollaboratorState>;
+
+            callback(
+                customEvent.detail
+            );
+        };
+
+    window.addEventListener(
+        "syncdoc-collaborators",
+        handleUpdate
+    );
+
+    return () => {
+        window.removeEventListener(
+            "syncdoc-collaborators",
+            handleUpdate
+        );
+    };
+};
 
 const remoteCursors =
     new Map<
@@ -196,6 +241,106 @@ const clearRemoteCursors =
     };
 
 // ========================================
+// Delete Permission
+// ========================================
+
+export interface DeleteRequest {
+
+    requestId: string;
+
+    blockId: string;
+
+    requesterId: string;
+}
+
+export interface DeleteResult {
+
+    requestId?: string;
+
+    blockId: string;
+
+    deleted: boolean;
+
+    reason?: string;
+}
+
+const deleteRequestListeners:
+    Array<
+        (
+            request: DeleteRequest
+        ) => void
+    > = [];
+
+const deleteResultListeners:
+    Array<
+        (
+            result: DeleteResult
+        ) => void
+    > = [];
+
+// ========================================
+// Delete Request Listener
+// ========================================
+
+export const onDeleteRequest = (
+    listener: (
+        request: DeleteRequest
+    ) => void
+): (() => void) => {
+
+    deleteRequestListeners.push(
+        listener
+    );
+
+    return () => {
+
+        const index =
+            deleteRequestListeners.indexOf(
+                listener
+            );
+
+        if (index !== -1) {
+
+            deleteRequestListeners.splice(
+                index,
+                1
+            );
+        }
+    };
+};
+
+// ========================================
+// Delete Result Listener
+// ========================================
+
+export const onDeleteResult = (
+    listener: (
+        result: DeleteResult
+    ) => void
+): (() => void) => {
+
+    deleteResultListeners.push(
+        listener
+    );
+
+    return () => {
+
+        const index =
+            deleteResultListeners.indexOf(
+                listener
+            );
+
+        if (index !== -1) {
+
+            deleteResultListeners.splice(
+                index,
+                1
+            );
+        }
+    };
+};
+
+// ========================================
 // Send Cursor Position
 // ========================================
 
@@ -209,7 +354,7 @@ export const sendCursorPosition = (
     if (
         !socket ||
         socket.readyState !==
-            WebSocket.OPEN
+        WebSocket.OPEN
     ) {
 
         return false;
@@ -223,13 +368,9 @@ export const sendCursorPosition = (
     socket.send(
         JSON.stringify({
             type: "cursor",
-
             blockId,
-
             cursorPosition,
-
             selectionStart,
-
             selectionEnd
         })
     );
@@ -267,7 +408,7 @@ export const requestBlockLock = (
     if (
         !socket ||
         socket.readyState !==
-            WebSocket.OPEN
+        WebSocket.OPEN
     ) {
 
         console.error(
@@ -303,7 +444,7 @@ export const releaseBlockLock = (
     if (
         !socket ||
         socket.readyState !==
-            WebSocket.OPEN
+        WebSocket.OPEN
     ) {
 
         console.error(
@@ -323,6 +464,126 @@ export const releaseBlockLock = (
     console.log(
         "UNLOCK REQUEST:",
         blockId
+    );
+
+    return true;
+};
+
+// ========================================
+// Request Block Deletion
+// ========================================
+
+export const requestDeleteBlock = (
+    blockId: string
+): boolean => {
+
+    if (
+        !socket ||
+        socket.readyState !==
+        WebSocket.OPEN
+    ) {
+
+        console.error(
+            "Cannot request deletion: WebSocket is not connected"
+        );
+
+        return false;
+    }
+
+    if (!currentDocumentId) {
+
+        console.error(
+            "Cannot request deletion: no document is connected"
+        );
+
+        return false;
+    }
+
+    socket.send(
+        JSON.stringify({
+            type:
+                "request-delete",
+            blockId
+        })
+    );
+
+    console.log(
+        "DELETE REQUEST:",
+        blockId
+    );
+
+    return true;
+};
+
+// ========================================
+// Approve Delete Request
+// ========================================
+
+export const approveDeleteRequest = (
+    requestId: string
+): boolean => {
+
+    if (
+        !socket ||
+        socket.readyState !==
+        WebSocket.OPEN
+    ) {
+
+        console.error(
+            "Cannot approve deletion: WebSocket is not connected"
+        );
+
+        return false;
+    }
+
+    socket.send(
+        JSON.stringify({
+            type:
+                "approve-delete",
+            requestId
+        })
+    );
+
+    console.log(
+        "DELETE APPROVAL:",
+        requestId
+    );
+
+    return true;
+};
+
+// ========================================
+// Reject Delete Request
+// ========================================
+
+export const rejectDeleteRequest = (
+    requestId: string
+): boolean => {
+
+    if (
+        !socket ||
+        socket.readyState !==
+        WebSocket.OPEN
+    ) {
+
+        console.error(
+            "Cannot reject deletion: WebSocket is not connected"
+        );
+
+        return false;
+    }
+
+    socket.send(
+        JSON.stringify({
+            type:
+                "reject-delete",
+            requestId
+        })
+    );
+
+    console.log(
+        "DELETE REJECTION:",
+        requestId
     );
 
     return true;
@@ -356,7 +617,7 @@ export const addBlock = (
     if (
         !socket ||
         socket.readyState !==
-            WebSocket.OPEN
+        WebSocket.OPEN
     ) {
 
         console.error(
@@ -430,6 +691,82 @@ export const addBlock = (
     );
 
     return blockId;
+};
+
+// ========================================
+// Remove Collaborative Block
+// ========================================
+
+export const removeBlock = (
+    blockId: string
+): boolean => {
+
+    if (!blocks.has(blockId)) {
+        console.warn(
+            "Cannot remove block. Block does not exist:",
+            blockId
+        );
+
+        return false;
+    }
+
+    // ----------------------------------------
+    // Remove block content
+    // ----------------------------------------
+
+    blocks.delete(
+        blockId
+    );
+
+    // ----------------------------------------
+    // Remove block type
+    // ----------------------------------------
+
+    blockTypes.delete(
+        blockId
+    );
+
+    // ----------------------------------------
+    // Remove block from order
+    // ----------------------------------------
+
+    const currentOrder =
+        blockOrder.toArray();
+
+    const index =
+        currentOrder.indexOf(
+            blockId
+        );
+
+    if (index !== -1) {
+
+        blockOrder.delete(
+            index,
+            1
+        );
+    }
+
+    // ----------------------------------------
+    // Remove lock
+    // ----------------------------------------
+
+    if (
+        blockLocks.has(
+            blockId
+        )
+    ) {
+
+        blockLocks.delete(
+            blockId
+        );
+    }
+
+    console.log(
+        "BLOCK REMOVED:",
+        blockId
+    );
+
+    return true;
 };
 
 // ========================================
@@ -554,9 +891,9 @@ export const connectToDocument = (
     if (
         socket &&
         currentDocumentId ===
-            documentId &&
+        documentId &&
         socket.readyState ===
-            WebSocket.OPEN
+        WebSocket.OPEN
     ) {
 
         console.log(
@@ -668,7 +1005,7 @@ export const connectToDocument = (
             update.buffer.slice(
                 update.byteOffset,
                 update.byteOffset +
-                    update.byteLength
+                update.byteLength
             ) as ArrayBuffer;
 
         // --------------------------------
@@ -810,6 +1147,257 @@ export const connectToDocument = (
                 }
 
                 // =================================
+                // Server Rejected Yjs Update
+                // =================================
+
+                if (
+                    message.type ===
+                    "updateRejected"
+                ) {
+
+                    console.warn(
+                        "YJS UPDATE REJECTED:",
+                        message
+                    );
+
+                    const blockId =
+                        message.blockId;
+
+                    const authoritativeContent =
+                        message.content;
+
+                    // --------------------------------
+                    // Validate response
+                    // --------------------------------
+
+                    if (
+                        !blockId ||
+                        typeof authoritativeContent !==
+                        "string"
+                    ) {
+
+                        console.error(
+                            "Cannot restore rejected block:",
+                            message
+                        );
+
+                        return;
+                    }
+
+                    // --------------------------------
+                    // Find local Y.Text
+                    // --------------------------------
+
+                    const sharedText =
+                        blocks.get(
+                            blockId
+                        );
+
+                    if (
+                        !(sharedText instanceof Y.Text)
+                    ) {
+
+                        console.error(
+                            "Rejected block not found:",
+                            blockId
+                        );
+
+                        return;
+                    }
+
+                    // --------------------------------
+                    // Restore server-authoritative content
+                    // --------------------------------
+
+                    ydoc.transact(
+                        () => {
+
+                            sharedText.delete(
+                                0,
+                                sharedText.length
+                            );
+
+                            if (
+                                authoritativeContent.length > 0
+                            ) {
+
+                                sharedText.insert(
+                                    0,
+                                    authoritativeContent
+                                );
+                            }
+
+                        },
+                        "remote"
+                    );
+
+                    console.log(
+                        "BLOCK RESTORED AFTER REJECTED UPDATE:",
+                        blockId
+                    );
+
+                    // --------------------------------
+                    // Notify React UI
+                    // --------------------------------
+
+                    window.dispatchEvent(
+                        new CustomEvent(
+                            "syncdoc-update-rejected",
+                            {
+                                detail: message
+                            }
+                        )
+                    );
+
+                    return;
+                }
+
+                // =================================
+                // Delete Request
+                // =================================
+
+                if (
+                    message.type ===
+                    "delete-request"
+                ) {
+
+                    console.log(
+                        "DELETE REQUEST RECEIVED:",
+                        message
+                    );
+
+                    deleteRequestListeners.forEach(
+                        (
+                            listener
+                        ) => {
+
+                            listener({
+                                requestId:
+                                    message.requestId,
+
+                                blockId:
+                                    message.blockId,
+
+                                requesterId:
+                                    message.requesterId
+                            });
+                        }
+                    );
+
+                    return;
+                }
+                if (
+                    message.type ===
+                    "collaborators"
+                ) {
+                    collaborators = {
+                        users:
+                            Array.isArray(
+                                message.users
+                            )
+                                ? message.users
+                                : [],
+                        count:
+                            typeof message.count ===
+                                "number"
+                                ? message.count
+                                : 0
+                    };
+
+                    console.log(
+                        "COLLABORATORS UPDATE:",
+                        collaborators
+                    );
+
+                    window.dispatchEvent(
+                        new CustomEvent(
+                            "syncdoc-collaborators",
+                            {
+                                detail:
+                                    collaborators
+                            }
+                        )
+                    );
+
+                    return;
+                }
+
+                // =================================
+                // Delete Pending
+                // =================================
+
+                if (
+                    message.type ===
+                    "delete-pending"
+                ) {
+
+                    console.log(
+                        "DELETE REQUEST PENDING:",
+                        message
+                    );
+
+                    return;
+                }
+
+                // =================================
+                // Delete Result
+                // =================================
+
+                if (
+                    message.type ===
+                    "deleteResult"
+                ) {
+
+                    console.log(
+                        "DELETE RESULT:",
+                        message
+                    );
+
+                    // ----------------------------------------
+                    // Apply successful deletion locally
+                    // ----------------------------------------
+
+                    if (
+                        message.deleted === true &&
+                        message.blockId
+                    ) {
+
+                        removeBlock(
+                            message.blockId
+                        );
+                    }
+
+                    // ----------------------------------------
+                    // Notify listeners
+                    // ----------------------------------------
+
+                    deleteResultListeners.forEach(
+                        (
+                            listener
+                        ) => {
+
+                            listener({
+                                requestId:
+                                    message.requestId,
+
+                                blockId:
+                                    message.blockId,
+
+                                deleted:
+                                    Boolean(
+                                        message.deleted
+                                    ),
+
+                                reason:
+                                    message.reason
+                            });
+                        }
+                    );
+
+                    return;
+                }
+
+                // =================================
                 // Remote Cursor
                 // =================================
 
@@ -821,7 +1409,7 @@ export const connectToDocument = (
                     if (
                         !message.userId ||
                         message.userId ===
-                            userId ||
+                        userId ||
                         !message.blockId
                     ) {
 
@@ -910,7 +1498,9 @@ export const connectToDocument = (
                     // ========================================
 
                     documentBlocks.forEach(
-                        (block) => {
+                        (
+                            block
+                        ) => {
 
                             // ====================================
                             // Restore Y.Text
@@ -1017,39 +1607,39 @@ export const connectToDocument = (
 
             try {
 
-    const data =
-        await event.data.arrayBuffer();
+                const data =
+                    await event.data.arrayBuffer();
 
-    const update =
-        new Uint8Array(
-            data
-        );
+                const update =
+                    new Uint8Array(
+                        data
+                    );
 
-    // ========================================
-    // Apply Remote Yjs Update
-    // ========================================
+                // ========================================
+                // Apply Remote Yjs Update
+                // ========================================
 
-    Y.applyUpdate(
-        ydoc,
-        update,
-        "remote"
-    );
+                Y.applyUpdate(
+                    ydoc,
+                    update,
+                    "remote"
+                );
 
-    // ========================================
-    // Mark Synchronization Complete
-    // ========================================
+                // ========================================
+                // Mark Synchronization Complete
+                // ========================================
 
-    markSyncReady(
-        documentId
-    );
+                markSyncReady(
+                    documentId
+                );
 
-} catch (error) {
+            } catch (error) {
 
-    console.error(
-        "Failed to apply Yjs update:",
-        error
-    );
-}
+                console.error(
+                    "Failed to apply Yjs update:",
+                    error
+                );
+            }
         };
 
     // ========================================
@@ -1109,6 +1699,20 @@ export const connectToDocument = (
                 false;
 
             clearRemoteCursors();
+            collaborators = {
+                users: [],
+                count: 0
+            };
+
+            window.dispatchEvent(
+                new CustomEvent(
+                    "syncdoc-collaborators",
+                    {
+                        detail:
+                            collaborators
+                    }
+                )
+            );
         };
 
     // ========================================
