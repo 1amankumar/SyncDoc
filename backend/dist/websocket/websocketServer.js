@@ -37,6 +37,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 const ws_1 = require("ws");
+const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const user_js_1 = __importDefault(require("../models/user.js"));
 const Y = __importStar(require("yjs"));
 const sanitizationService_js_1 = require("../services/sanitizationService.js");
@@ -274,6 +275,19 @@ const findClientByUserId = (documentId, userId) => {
     return null;
 };
 // ========================================
+// Extract JWT From Cookie
+// ========================================
+const getTokenFromCookie = (cookieHeader) => {
+    if (!cookieHeader) {
+        return null;
+    }
+    const cookies = cookieHeader.split(";");
+    const tokenCookie = cookies.find((cookie) => cookie.trim().startsWith("token="));
+    if (!tokenCookie) {
+        return null;
+    }
+    return decodeURIComponent(tokenCookie.trim().substring("token=".length));
+};
 // WebSocket Server
 // ========================================
 const ws = new ws_1.WebSocketServer({
@@ -282,22 +296,76 @@ const ws = new ws_1.WebSocketServer({
 // ========================================
 // Client Connection
 // ========================================
-ws.on("connection", (socket, request) => {
+ws.on("connection", async (socket, request) => {
     // --------------------------------
     // Get URL information
     // --------------------------------
     const url = new URL(request.url || "", "http://localhost");
     const documentId = url.pathname.split("/")[2];
-    const userId = url.searchParams.get("userId");
     // --------------------------------
-    // Validate connection
+    // Authenticate WebSocket connection
     // --------------------------------
-    if (!documentId ||
-        !userId) {
-        socket.close();
+    if (!documentId) {
+        console.log("WebSocket rejected: missing document ID");
+        socket.close(1008, "Invalid document");
         return;
     }
-    console.log("Client connected:", documentId, userId);
+    const token = getTokenFromCookie(request.headers.cookie);
+    if (!token) {
+        console.log("WebSocket rejected: JWT cookie missing");
+        socket.close(1008, "Authentication required");
+        return;
+    }
+    if (!process.env.JWT_SECRET) {
+        console.error("JWT_SECRET is not configured");
+        socket.close(1011, "Server configuration error");
+        return;
+    }
+    let userId;
+    try {
+        const payload = jsonwebtoken_1.default.verify(token, process.env.JWT_SECRET);
+        if (typeof payload === "string" ||
+            !payload.userId) {
+            throw new Error("Invalid JWT payload");
+        }
+        userId = payload.userId;
+    }
+    catch {
+        console.log("WebSocket rejected: invalid JWT");
+        socket.close(1008, "Invalid authentication token");
+        return;
+    }
+    // --------------------------------
+    // Verify user exists
+    // --------------------------------
+    const user = await user_js_1.default.findById(userId);
+    if (!user) {
+        console.log("WebSocket rejected: user not found:", userId);
+        socket.close(1008, "User not found");
+        return;
+    }
+    // --------------------------------
+    // Verify document ownership
+    // --------------------------------
+    let document;
+    try {
+        document =
+            await Document_js_1.default.findOne({
+                _id: documentId,
+                owner: userId
+            });
+    }
+    catch {
+        console.log("WebSocket rejected: invalid document ID:", documentId);
+        socket.close(1008, "Invalid document");
+        return;
+    }
+    if (!document) {
+        console.log("WebSocket rejected: document access denied:", documentId, userId);
+        socket.close(1008, "Document access denied");
+        return;
+    }
+    console.log("Authorized WebSocket connection:", "document:", documentId, "user:", userId);
     // ========================================
     // Get or Create Yjs Document
     // ========================================
@@ -728,35 +796,133 @@ ws.on("connection", (socket, request) => {
             console.log("Unknown control message:", controlMessage);
             return;
         }
-        // ====================================
+        // ========================================
         // BINARY YJS UPDATE
-        // ====================================
+        // ========================================
         console.log("Yjs update received for document:", documentId);
         const update = new Uint8Array(message);
-        const stateBefore = Y.encodeStateVector(ydoc);
-        Y.applyUpdate(ydoc, update);
-        // ========================================
-        // Sanitize Collaborative Block Content
-        // ========================================
-        const blocks = ydoc.getMap("blocks");
-        ydoc.transact(() => {
-            blocks.forEach((yText, blockId) => {
-                if (!(yText instanceof Y.Text)) {
-                    return;
-                }
-                const currentContent = yText.toString();
-                const sanitizedContent = (0, sanitizationService_js_1.sanitizeBlockContent)(currentContent);
-                if (currentContent !==
-                    sanitizedContent) {
-                    yText.delete(0, yText.length);
-                    yText.insert(0, sanitizedContent);
-                    console.log("Sanitized block:", blockId);
+        try {
+            // ========================================
+            // Find which blocks were changed
+            // ========================================
+            const changedBlockIds = getChangedBlockIds(ydoc, update);
+            console.log("Changed blocks:", changedBlockIds);
+            // ========================================
+            // Get current block locks
+            // ========================================
+            const blockLocks = ydoc.getMap("blockLocks");
+            // ========================================
+            // Create temporary document
+            // ========================================
+            const tempDoc = new Y.Doc();
+            const currentState = Y.encodeStateAsUpdate(ydoc);
+            Y.applyUpdate(tempDoc, currentState);
+            // Apply client's update ONLY
+            // to the temporary document
+            Y.applyUpdate(tempDoc, update);
+            // ========================================
+            // SECURITY CHECK
+            // Client cannot modify blockLocks
+            // directly.
+            // ========================================
+            const tempBlockLocks = tempDoc.getMap("blockLocks");
+            let lockMapChanged = false;
+            // Check existing locks
+            blockLocks.forEach((owner, blockId) => {
+                if (tempBlockLocks.get(blockId) !==
+                    owner) {
+                    lockMapChanged = true;
                 }
             });
-        });
-        const sanitizedUpdate = Y.encodeStateAsUpdate(ydoc, stateBefore);
-        scheduleDocumentSave(documentId, ydoc);
-        broadcastUpdate(documentClients, sanitizedUpdate);
+            // Check newly added locks
+            tempBlockLocks.forEach((owner, blockId) => {
+                if (blockLocks.get(blockId) !==
+                    owner) {
+                    lockMapChanged = true;
+                }
+            });
+            if (lockMapChanged) {
+                console.log("YJS UPDATE REJECTED:", "Client attempted to modify blockLocks");
+                socket.send(JSON.stringify({
+                    type: "updateRejected",
+                    reason: "Block locks can only be changed through lock/unlock requests"
+                }));
+                return;
+            }
+            // ========================================
+            // SERVER-AUTHORITATIVE LOCK CHECK
+            // ========================================
+            for (const blockId of changedBlockIds) {
+                const lockOwner = blockLocks.get(blockId);
+                // ------------------------------------
+                // Block is locked by another user
+                // ------------------------------------
+                if (lockOwner &&
+                    lockOwner !== userId) {
+                    console.log("YJS UPDATE REJECTED:", "Block:", blockId, "Locked by:", lockOwner, "Requester:", userId);
+                    const authoritativeBlock = ydoc
+                        .getMap("blocks")
+                        .get(blockId);
+                    socket.send(JSON.stringify({
+                        type: "updateRejected",
+                        blockId,
+                        reason: "Block is locked by another user",
+                        lockedBy: lockOwner,
+                        content: authoritativeBlock instanceof Y.Text
+                            ? authoritativeBlock.toString()
+                            : ""
+                    }));
+                    return;
+                }
+            }
+            // ========================================
+            // UPDATE AUTHORIZED
+            // ========================================
+            const stateBefore = Y.encodeStateVector(ydoc);
+            // ========================================
+            // Apply update to real Yjs document
+            // ========================================
+            Y.applyUpdate(ydoc, update);
+            // ========================================
+            // Sanitize Collaborative Block Content
+            // ========================================
+            const blocks = ydoc.getMap("blocks");
+            ydoc.transact(() => {
+                blocks.forEach((yText, blockId) => {
+                    if (!(yText instanceof Y.Text)) {
+                        return;
+                    }
+                    const currentContent = yText.toString();
+                    const sanitizedContent = (0, sanitizationService_js_1.sanitizeBlockContent)(currentContent);
+                    if (currentContent !==
+                        sanitizedContent) {
+                        yText.delete(0, yText.length);
+                        yText.insert(0, sanitizedContent);
+                        console.log("Sanitized block:", blockId);
+                    }
+                });
+            });
+            // ========================================
+            // Generate final update
+            // ========================================
+            const sanitizedUpdate = Y.encodeStateAsUpdate(ydoc, stateBefore);
+            // ========================================
+            // Save document
+            // ========================================
+            scheduleDocumentSave(documentId, ydoc);
+            // ========================================
+            // Broadcast authorized update
+            // ========================================
+            broadcastUpdate(documentClients, sanitizedUpdate);
+            console.log("Yjs update accepted:", documentId, "by", userId);
+        }
+        catch (error) {
+            console.error("Failed to process Yjs update:", error);
+            socket.send(JSON.stringify({
+                type: "updateRejected",
+                reason: "Invalid Yjs update"
+            }));
+        }
     });
     // ========================================
     // Client Disconnected
@@ -816,7 +982,7 @@ ws.on("connection", (socket, request) => {
         // Remove all locks owned by this user
         // ====================================
         const blockLocks = ydoc.getMap("blockLocks");
-        const stateBefore = Y.encodeStateVector(ydoc);
+        const stateBefore = Y.encodeStateAsUpdate(ydoc);
         ydoc.transact(() => {
             blockLocks.forEach((lockedBy, blockId) => {
                 if (lockedBy ===

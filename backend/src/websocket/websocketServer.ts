@@ -3,6 +3,8 @@ import {
     WebSocket
 } from "ws";
 
+import jwt from "jsonwebtoken";
+
 import UserModel from "../models/user.js";
 
 import * as Y from "yjs";
@@ -590,6 +592,40 @@ const findClientByUserId =
     };
 
 // ========================================
+// JWT Payload
+// ========================================
+
+interface JwtPayload {
+    userId: string;
+}
+
+// ========================================
+// Extract JWT From Cookie
+// ========================================
+
+const getTokenFromCookie = (
+    cookieHeader: string | undefined
+): string | null => {
+
+    if (!cookieHeader) {
+        return null;
+    }
+
+    const cookies = cookieHeader.split(";");
+
+    const tokenCookie = cookies.find(
+        (cookie) => cookie.trim().startsWith("token=")
+    );
+
+    if (!tokenCookie) {
+        return null;
+    }
+
+    return decodeURIComponent(
+        tokenCookie.trim().substring("token=".length)
+    );
+};
+
 // WebSocket Server
 // ========================================
 
@@ -604,7 +640,7 @@ const ws =
 
 ws.on(
     "connection",
-    (
+    async (
         socket,
         request
     ) => {
@@ -622,28 +658,116 @@ ws.on(
         const documentId =
             url.pathname.split("/")[2];
 
-        const userId =
-            url.searchParams.get(
-                "userId"
+        // --------------------------------
+        // Authenticate WebSocket connection
+        // --------------------------------
+
+        if (!documentId) {
+            console.log(
+                "WebSocket rejected: missing document ID"
+            );
+            socket.close(1008, "Invalid document");
+            return;
+        }
+
+        const token =
+            getTokenFromCookie(
+                request.headers.cookie
             );
 
+        if (!token) {
+            console.log(
+                "WebSocket rejected: JWT cookie missing"
+            );
+            socket.close(1008, "Authentication required");
+            return;
+        }
+
+        if (!process.env.JWT_SECRET) {
+            console.error(
+                "JWT_SECRET is not configured"
+            );
+            socket.close(1011, "Server configuration error");
+            return;
+        }
+
+        let userId: string;
+
+        try {
+            const payload = jwt.verify(
+                token,
+                process.env.JWT_SECRET
+            );
+
+            if (
+                typeof payload === "string" ||
+                !payload.userId
+            ) {
+                throw new Error("Invalid JWT payload");
+            }
+
+            userId = (payload as JwtPayload).userId;
+
+        } catch {
+            console.log(
+                "WebSocket rejected: invalid JWT"
+            );
+            socket.close(1008, "Invalid authentication token");
+            return;
+        }
+
         // --------------------------------
-        // Validate connection
+        // Verify user exists
         // --------------------------------
 
-        if (
-            !documentId ||
-            !userId
-        ) {
+        const user =
+            await UserModel.findById(userId);
 
-            socket.close();
+        if (!user) {
+            console.log(
+                "WebSocket rejected: user not found:",
+                userId
+            );
+            socket.close(1008, "User not found");
+            return;
+        }
 
+        // --------------------------------
+        // Verify document ownership
+        // --------------------------------
+
+        let document;
+
+        try {
+            document =
+                await DocumentModel.findOne({
+                    _id: documentId,
+                    owner: userId
+                });
+        } catch {
+            console.log(
+                "WebSocket rejected: invalid document ID:",
+                documentId
+            );
+            socket.close(1008, "Invalid document");
+            return;
+        }
+
+        if (!document) {
+            console.log(
+                "WebSocket rejected: document access denied:",
+                documentId,
+                userId
+            );
+            socket.close(1008, "Document access denied");
             return;
         }
 
         console.log(
-            "Client connected:",
+            "Authorized WebSocket connection:",
+            "document:",
             documentId,
+            "user:",
             userId
         );
 

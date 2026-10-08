@@ -3,8 +3,9 @@ import { Router } from "express";
 import {
     createDocument,
     getDocuments,
+    addBlockToDocument,
     exportDocument,
-    addBlockToDocument
+    shareDocument
 } from "../controllers/documentController.js";
 
 import { protect } from "../middlewares/authMiddleware.js";
@@ -41,6 +42,8 @@ router.post(
     addBlockToDocument
 );
 
+
+
 // ========================================
 // Export Document
 // ========================================
@@ -49,6 +52,12 @@ router.get(
     "/:id/export",
     protect,
     exportDocument
+);
+
+router.post(
+    "/:id/share",
+    protect,
+    shareDocument
 );
 
 export default router;

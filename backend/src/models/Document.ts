@@ -15,6 +15,15 @@ export interface IBlock {
 }
 
 // ========================================
+// Collaborator Interface
+// ========================================
+
+export interface ICollaborator {
+    user: mongoose.Types.ObjectId;
+    permission: "view" | "edit";
+}
+
+// ========================================
 // Document Interface
 // ========================================
 
@@ -22,7 +31,12 @@ export interface IDocument
     extends MongoDocument {
 
     title: string;
+
     blocks: IBlock[];
+
+    owner: mongoose.Types.ObjectId;
+
+    collaborators: ICollaborator[];
 }
 
 // ========================================
@@ -39,13 +53,17 @@ const blockSchema =
 
             type: {
                 type: String,
-                required: true,
-                trim: true
+                required: true
             },
 
             content: {
                 type: String,
                 default: ""
+            },
+
+            children: {
+                type: [],
+                default: []
             }
         },
         {
@@ -54,15 +72,32 @@ const blockSchema =
     );
 
 // ========================================
-// Children
+// Collaborator Schema
 // ========================================
 
-blockSchema.add({
-    children: {
-        type: [blockSchema],
-        default: []
-    }
-});
+const collaboratorSchema =
+    new Schema<ICollaborator>(
+        {
+            user: {
+                type: Schema.Types.ObjectId,
+                ref: "User",
+                required: true
+            },
+
+            permission: {
+                type: String,
+                enum: [
+                    "view",
+                    "edit"
+                ],
+                default: "view",
+                required: true
+            }
+        },
+        {
+            _id: false
+        }
+    );
 
 // ========================================
 // Document Schema
@@ -80,6 +115,17 @@ const documentSchema =
             blocks: {
                 type: [blockSchema],
                 default: []
+            },
+
+            owner: {
+                type: Schema.Types.ObjectId,
+                ref: "User",
+                required: true
+            },
+
+            collaborators: {
+                type: [collaboratorSchema],
+                default: []
             }
         },
         {
@@ -88,84 +134,7 @@ const documentSchema =
     );
 
 // ========================================
-// Validation
-// ========================================
-
-documentSchema.pre(
-    "save",
-    function () {
-
-        const validateBlocks = (
-            blocks: IBlock[]
-        ): void => {
-
-            for (
-                const block of blocks
-            ) {
-
-                // --------------------------------
-                // Block ID
-                // --------------------------------
-
-                if (!block._id) {
-
-                    throw new Error(
-                        "Block ID is required"
-                    );
-                }
-
-                // --------------------------------
-                // Block Type
-                // --------------------------------
-
-                if (
-                    !block.type ||
-                    !block.type.trim()
-                ) {
-
-                    throw new Error(
-                        "Block type is required"
-                    );
-                }
-
-                // --------------------------------
-                // Block Content
-                // --------------------------------
-
-                if (
-                    typeof block.content !==
-                    "string"
-                ) {
-
-                    throw new Error(
-                        "Block content must be a string"
-                    );
-                }
-
-                // --------------------------------
-                // Child Blocks
-                // --------------------------------
-
-                if (
-                    block.children &&
-                    block.children.length > 0
-                ) {
-
-                    validateBlocks(
-                        block.children
-                    );
-                }
-            }
-        };
-
-        validateBlocks(
-            this.blocks
-        );
-    }
-);
-
-// ========================================
-// Model
+// Export Model
 // ========================================
 
 const DocumentModel =

@@ -75,6 +75,14 @@ const documentSchema = new mongoose_1.Schema({
     blocks: {
         type: [blockSchema],
         default: []
+    },
+    // ========================================
+    // Document Owner
+    // ========================================
+    owner: {
+        type: mongoose_1.Schema.Types.ObjectId,
+        ref: "User",
+        required: true
     }
 }, {
     timestamps: true
