@@ -42,6 +42,7 @@ const user_js_1 = __importDefault(require("../models/user.js"));
 const Y = __importStar(require("yjs"));
 const sanitizationService_js_1 = require("../services/sanitizationService.js");
 const Document_js_1 = __importDefault(require("../models/Document.js"));
+const crypto_1 = __importDefault(require("crypto"));
 // ========================================
 // Yjs Documents
 // ========================================
@@ -345,14 +346,27 @@ ws.on("connection", async (socket, request) => {
         return;
     }
     // --------------------------------
-    // Verify document ownership
+    // Verify document access
     // --------------------------------
+    // A user can connect if they are:
+    // 1. The document owner, OR
+    // 2. A collaborator on the document
+    //
+    // We do NOT trust a userId from the WebSocket URL.
+    // userId comes from the verified JWT above.
     let document;
     try {
         document =
             await Document_js_1.default.findOne({
                 _id: documentId,
-                owner: userId
+                $or: [
+                    {
+                        owner: userId
+                    },
+                    {
+                        "collaborators.user": userId
+                    }
+                ]
             });
     }
     catch {
@@ -365,7 +379,18 @@ ws.on("connection", async (socket, request) => {
         socket.close(1008, "Document access denied");
         return;
     }
-    console.log("Authorized WebSocket connection:", "document:", documentId, "user:", userId);
+    // --------------------------------
+    // Get user's document permission
+    // --------------------------------
+    const isOwner = document.owner.toString() === userId;
+    const collaborator = document.collaborators.find((item) => item.user.toString() ===
+        userId);
+    const permission = isOwner
+        ? "owner"
+        : collaborator?.permission;
+    const canEdit = permission === "owner" ||
+        permission === "edit";
+    console.log("Authorized WebSocket connection:", "document:", documentId, "user:", userId, "permission:", permission);
     // ========================================
     // Get or Create Yjs Document
     // ========================================
@@ -424,6 +449,15 @@ ws.on("connection", async (socket, request) => {
             // ====================================
             if (controlMessage.type ===
                 "lock") {
+                if (!canEdit) {
+                    socket.send(JSON.stringify({
+                        type: "lockResult",
+                        blockId: controlMessage.blockId,
+                        granted: false,
+                        reason: "You have view-only permission"
+                    }));
+                    return;
+                }
                 const blockId = controlMessage.blockId;
                 if (!blockId) {
                     return;
@@ -473,6 +507,15 @@ ws.on("connection", async (socket, request) => {
             // ====================================
             if (controlMessage.type ===
                 "unlock") {
+                if (!canEdit) {
+                    socket.send(JSON.stringify({
+                        type: "unlockResult",
+                        blockId: controlMessage.blockId,
+                        released: false,
+                        reason: "You have view-only permission"
+                    }));
+                    return;
+                }
                 const blockId = controlMessage.blockId;
                 if (!blockId) {
                     return;
@@ -508,10 +551,25 @@ ws.on("connection", async (socket, request) => {
             // ====================================
             if (controlMessage.type ===
                 "request-delete") {
+                // --------------------------------
+                // Check edit permission
+                // --------------------------------
+                if (!canEdit) {
+                    socket.send(JSON.stringify({
+                        type: "deleteResult",
+                        blockId: controlMessage.blockId,
+                        deleted: false,
+                        reason: "You have view-only permission"
+                    }));
+                    return;
+                }
                 const blockId = controlMessage.blockId;
                 if (!blockId) {
                     return;
                 }
+                // --------------------------------
+                // Check block exists
+                // --------------------------------
                 const blocks = ydoc.getMap("blocks");
                 if (!blocks.has(blockId)) {
                     socket.send(JSON.stringify({
@@ -522,12 +580,10 @@ ws.on("connection", async (socket, request) => {
                     }));
                     return;
                 }
-                const blockLocks = ydoc.getMap("blockLocks");
-                const lockOwner = blockLocks.get(blockId);
-                // --------------------------------
-                // No lock
-                // --------------------------------
-                if (!lockOwner) {
+                // ========================================
+                // OWNER CAN DELETE IMMEDIATELY
+                // ========================================
+                if (isOwner) {
                     const deleteUpdate = deleteBlockFromYjs(ydoc, blockId);
                     scheduleDocumentSave(documentId, ydoc);
                     broadcastUpdate(documentClients, deleteUpdate);
@@ -536,52 +592,60 @@ ws.on("connection", async (socket, request) => {
                         blockId,
                         deleted: true
                     }));
-                    console.log("BLOCK DELETED:", blockId, "by", userId);
+                    console.log("BLOCK DELETED BY DOCUMENT OWNER:", blockId, "by", userId);
                     return;
                 }
+                // ========================================
+                // COLLABORATOR DELETE
+                // ALWAYS REQUIRES OWNER APPROVAL
+                // ========================================
                 // --------------------------------
-                // Current user owns lock
+                // Find document owner
                 // --------------------------------
-                if (lockOwner ===
-                    userId) {
-                    const deleteUpdate = deleteBlockFromYjs(ydoc, blockId);
-                    scheduleDocumentSave(documentId, ydoc);
-                    broadcastUpdate(documentClients, deleteUpdate);
-                    socket.send(JSON.stringify({
-                        type: "deleteResult",
-                        blockId,
-                        deleted: true
-                    }));
-                    console.log("BLOCK DELETED BY LOCK OWNER:", blockId, "by", userId);
-                    return;
-                }
+                const ownerId = document.owner.toString();
+                const ownerSocket = findClientByUserId(documentId, ownerId);
                 // --------------------------------
-                // Block belongs to another user
+                // Owner must be connected
                 // --------------------------------
-                const ownerSocket = findClientByUserId(documentId, lockOwner);
                 if (!ownerSocket) {
                     socket.send(JSON.stringify({
                         type: "deleteResult",
                         blockId,
                         deleted: false,
-                        reason: "Block owner is not connected"
+                        reason: "Document owner is not connected. Delete request cannot be approved."
+                    }));
+                    return;
+                }
+                // --------------------------------
+                // Prevent duplicate requests
+                // --------------------------------
+                const existingRequest = Array.from(deleteRequests.values()).find((request) => request.documentId ===
+                    documentId &&
+                    request.blockId ===
+                        blockId);
+                if (existingRequest) {
+                    socket.send(JSON.stringify({
+                        type: "delete-pending",
+                        requestId: existingRequest.requestId,
+                        blockId,
+                        ownerId
                     }));
                     return;
                 }
                 // --------------------------------
                 // Create delete request
                 // --------------------------------
-                const requestId = crypto.randomUUID();
+                const requestId = crypto_1.default.randomUUID();
                 deleteRequests.set(requestId, {
                     requestId,
                     documentId,
                     blockId,
                     requesterId: userId,
-                    ownerId: lockOwner,
+                    ownerId,
                     requesterSocket: socket
                 });
                 // --------------------------------
-                // Tell block owner
+                // Tell owner
                 // --------------------------------
                 ownerSocket.send(JSON.stringify({
                     type: "delete-request",
@@ -596,9 +660,9 @@ ws.on("connection", async (socket, request) => {
                     type: "delete-pending",
                     requestId,
                     blockId,
-                    ownerId: lockOwner
+                    ownerId
                 }));
-                console.log("DELETE REQUEST CREATED:", requestId, "block:", blockId, "requester:", userId, "owner:", lockOwner);
+                console.log("DELETE REQUEST CREATED:", requestId, "block:", blockId, "requester:", userId, "owner:", ownerId);
                 return;
             }
             // ====================================
@@ -606,6 +670,18 @@ ws.on("connection", async (socket, request) => {
             // ====================================
             if (controlMessage.type ===
                 "approve-delete") {
+                // --------------------------------
+                // Only document owner can approve
+                // --------------------------------
+                if (!isOwner) {
+                    socket.send(JSON.stringify({
+                        type: "deleteResult",
+                        requestId: controlMessage.requestId,
+                        deleted: false,
+                        reason: "Only the document owner can approve deletion"
+                    }));
+                    return;
+                }
                 const requestId = controlMessage.requestId;
                 if (!requestId) {
                     return;
@@ -621,7 +697,7 @@ ws.on("connection", async (socket, request) => {
                     return;
                 }
                 // --------------------------------
-                // Only lock owner can approve
+                // Verify this owner owns the request
                 // --------------------------------
                 if (deleteRequest.ownerId !==
                     userId) {
@@ -629,24 +705,22 @@ ws.on("connection", async (socket, request) => {
                         type: "deleteResult",
                         requestId,
                         deleted: false,
-                        reason: "Only the block owner can approve"
+                        reason: "Only the document owner can approve"
                     }));
                     return;
                 }
-                const blockLocks = ydoc.getMap("blockLocks");
-                const currentOwner = blockLocks.get(deleteRequest.blockId);
                 // --------------------------------
-                // Verify lock is still owned
+                // Check block still exists
                 // --------------------------------
-                if (currentOwner !==
-                    userId) {
+                const blocks = ydoc.getMap("blocks");
+                if (!blocks.has(deleteRequest.blockId)) {
                     deleteRequests.delete(requestId);
                     socket.send(JSON.stringify({
                         type: "deleteResult",
                         requestId,
                         blockId: deleteRequest.blockId,
                         deleted: false,
-                        reason: "Block lock is no longer owned by you"
+                        reason: "Block no longer exists"
                     }));
                     return;
                 }
@@ -685,7 +759,7 @@ ws.on("connection", async (socket, request) => {
                     blockId: deleteRequest.blockId,
                     deleted: true
                 }));
-                console.log("DELETE APPROVED:", requestId, "block:", deleteRequest.blockId, "approved by:", userId);
+                console.log("DELETE APPROVED:", requestId, "block:", deleteRequest.blockId, "approved by document owner:", userId);
                 return;
             }
             // ====================================
@@ -693,6 +767,15 @@ ws.on("connection", async (socket, request) => {
             // ====================================
             if (controlMessage.type ===
                 "reject-delete") {
+                if (!canEdit) {
+                    socket.send(JSON.stringify({
+                        type: "deleteResult",
+                        requestId: controlMessage.requestId,
+                        deleted: false,
+                        reason: "You have view-only permission"
+                    }));
+                    return;
+                }
                 const requestId = controlMessage.requestId;
                 if (!requestId) {
                     return;
@@ -847,6 +930,32 @@ ws.on("connection", async (socket, request) => {
                     type: "updateRejected",
                     reason: "Block locks can only be changed through lock/unlock requests"
                 }));
+                return;
+            }
+            // ========================================
+            // PERMISSION CHECK
+            // ========================================
+            if (!canEdit) {
+                console.log("YJS UPDATE REJECTED:", "View-only user attempted to edit", "User:", userId, "Document:", documentId);
+                const viewOnlyBlocks = ydoc.getMap("blocks");
+                changedBlockIds.forEach((blockId) => {
+                    const authoritativeBlock = viewOnlyBlocks.get(blockId);
+                    socket.send(JSON.stringify({
+                        type: "updateRejected",
+                        blockId,
+                        reason: "You have view-only permission and cannot edit this document",
+                        content: authoritativeBlock instanceof Y.Text
+                            ? authoritativeBlock.toString()
+                            : ""
+                    }));
+                });
+                if (changedBlockIds.length ===
+                    0) {
+                    socket.send(JSON.stringify({
+                        type: "updateRejected",
+                        reason: "You have view-only permission and cannot edit this document"
+                    }));
+                }
                 return;
             }
             // ========================================

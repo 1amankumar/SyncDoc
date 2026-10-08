@@ -83,7 +83,7 @@ interface BlockRendererProps {
         content: string
 
     ) => void;
-
+    canEdit: boolean;
 }
 
 
@@ -97,11 +97,9 @@ interface BlockRendererProps {
 
 
 const BlockRenderer = ({
-
     block,
-
-    onBlockContentChange
-
+    onBlockContentChange,
+    canEdit
 }: BlockRendererProps) => {
 
 
@@ -979,131 +977,65 @@ const BlockRenderer = ({
 
 
     const handleFocus = () => {
-
-
-
-        const userId =
-
-            getUserId();
-
-
+        const userId = getUserId();
 
         if (!userId) {
-
-
-
             console.error(
-
                 "Cannot edit block: user ID is not available"
-
             );
 
-
-
             return;
-
         }
 
-
-
         // ----------------------------------------
-
         // Set Active Block
-
         // ----------------------------------------
 
+        setActiveBlockId(block._id);
 
-
-        setActiveBlockId(
-
-            block._id
-
-        );
-
-
-
-        setSelectedBlockId(
-
-            block._id
-
-        );
-
-
+        setSelectedBlockId(block._id);
 
         // ----------------------------------------
-
         // Check Existing Lock
-
         // ----------------------------------------
-
-
 
         const existingOwner =
+            blockLocks.get(block._id);
 
-            blockLocks.get(
+        const effectiveLockOwner =
+            existingOwner ?? lockOwner;
 
-                block._id
+        // ----------------------------------------
+        // Another User Owns Lock
+        // ----------------------------------------
 
+        if (
+            effectiveLockOwner &&
+            effectiveLockOwner !== userId
+        ) {
+            console.warn(
+                "Cannot edit block. Current user does not own the lock."
             );
 
-
-
-        // ----------------------------------------
-
-        // Another User Owns Lock
-
-        // ----------------------------------------
-
-
-
-        if (
-
-            existingOwner &&
-
-            existingOwner !== userId
-
-        ) {
-
             return;
-
         }
 
-
-
         // ----------------------------------------
-
         // Already Owns Lock
-
         // ----------------------------------------
-
-
 
         if (
-
-            existingOwner === userId
-
+            effectiveLockOwner === userId
         ) {
-
             return;
-
         }
 
-
-
         // ----------------------------------------
-
+        // No Lock
         // Request Lock
-
         // ----------------------------------------
 
-
-
-        requestBlockLock(
-
-            block._id
-
-        );
-
+        requestBlockLock(block._id);
     };
 
 
@@ -1175,33 +1107,35 @@ const BlockRenderer = ({
 
 
         const existingOwner =
-
             blockLocks.get(
-
                 block._id
-
             );
 
+        const effectiveLockOwner =
+            existingOwner ?? lockOwner;
 
-
+        // Another user owns this block.
         if (
-
-            existingOwner !== userId
-
+            effectiveLockOwner &&
+            effectiveLockOwner !== userId
         ) {
-
-
-
             console.warn(
-
                 "Cannot edit block. Current user does not own the lock."
-
             );
-
-
 
             return;
+        }
 
+        // No lock yet.
+        // Request one and wait for the server.
+        if (!effectiveLockOwner) {
+            requestBlockLock(block._id);
+
+            console.warn(
+                "Lock requested. Waiting for lock confirmation..."
+            );
+
+            return;
         }
 
 
@@ -2541,7 +2475,7 @@ const BlockRenderer = ({
                 onSelect={handleSelect}
 
                 readOnly={
-
+                    !canEdit ||
                     !syncCompleted ||
 
                     !blocks.get(block._id) ||
@@ -3059,6 +2993,7 @@ const BlockRenderer = ({
                                         onBlockContentChange
 
                                     }
+                                    canEdit={canEdit}
 
                                 />
 

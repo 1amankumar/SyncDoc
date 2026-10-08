@@ -44,24 +44,36 @@ const blockSchema = new mongoose_1.Schema({
     },
     type: {
         type: String,
-        required: true,
-        trim: true
+        required: true
     },
     content: {
         type: String,
         default: ""
+    },
+    children: {
+        type: [mongoose_1.Schema.Types.Mixed],
+        default: []
     }
 }, {
     _id: false
 });
 // ========================================
-// Children
+// Collaborator Schema
 // ========================================
-blockSchema.add({
-    children: {
-        type: [blockSchema],
-        default: []
+const collaboratorSchema = new mongoose_1.Schema({
+    user: {
+        type: mongoose_1.Schema.Types.ObjectId,
+        ref: "User",
+        required: true
+    },
+    permission: {
+        type: String,
+        enum: ["view", "edit"],
+        required: true,
+        default: "view"
     }
+}, {
+    _id: false
 });
 // ========================================
 // Document Schema
@@ -76,56 +88,20 @@ const documentSchema = new mongoose_1.Schema({
         type: [blockSchema],
         default: []
     },
-    // ========================================
-    // Document Owner
-    // ========================================
     owner: {
         type: mongoose_1.Schema.Types.ObjectId,
         ref: "User",
         required: true
+    },
+    collaborators: {
+        type: [collaboratorSchema],
+        default: []
     }
 }, {
     timestamps: true
 });
 // ========================================
-// Validation
-// ========================================
-documentSchema.pre("save", function () {
-    const validateBlocks = (blocks) => {
-        for (const block of blocks) {
-            // --------------------------------
-            // Block ID
-            // --------------------------------
-            if (!block._id) {
-                throw new Error("Block ID is required");
-            }
-            // --------------------------------
-            // Block Type
-            // --------------------------------
-            if (!block.type ||
-                !block.type.trim()) {
-                throw new Error("Block type is required");
-            }
-            // --------------------------------
-            // Block Content
-            // --------------------------------
-            if (typeof block.content !==
-                "string") {
-                throw new Error("Block content must be a string");
-            }
-            // --------------------------------
-            // Child Blocks
-            // --------------------------------
-            if (block.children &&
-                block.children.length > 0) {
-                validateBlocks(block.children);
-            }
-        }
-    };
-    validateBlocks(this.blocks);
-});
-// ========================================
-// Model
+// Mongoose Model
 // ========================================
 const DocumentModel = mongoose_1.default.model("Document", documentSchema);
 exports.default = DocumentModel;

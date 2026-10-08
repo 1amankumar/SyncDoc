@@ -206,6 +206,8 @@ export const onCollaboratorsUpdate = (
     };
 };
 
+
+
 const remoteCursors =
     new Map<
         string,
@@ -1100,11 +1102,51 @@ export const connectToDocument = (
                     message.type ===
                     "lockResult"
                 ) {
-
                     console.log(
                         "LOCK RESULT:",
                         message
                     );
+
+                    // ========================================
+                    // Update local Yjs lock state immediately
+                    // ========================================
+
+                    if (
+                        message.granted === true &&
+                        message.blockId &&
+                        message.lockedBy
+                    ) {
+                        blockLocks.set(
+                            message.blockId,
+                            message.lockedBy
+                        );
+
+                        console.log(
+                            "LOCAL LOCK UPDATED:",
+                            message.blockId,
+                            message.lockedBy
+                        );
+                    }
+
+                    // ========================================
+                    // Lock denied
+                    // ========================================
+
+                    if (
+                        message.granted === false &&
+                        message.blockId
+                    ) {
+                        console.log(
+                            "LOCK DENIED:",
+                            message.blockId,
+                            "locked by:",
+                            message.lockedBy
+                        );
+                    }
+
+                    // ========================================
+                    // Notify BlockRenderer
+                    // ========================================
 
                     window.dispatchEvent(
                         new CustomEvent(

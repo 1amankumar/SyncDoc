@@ -20,5 +20,21 @@ router.post("/:id/blocks", authMiddleware_js_1.protect, documentController_js_1.
 // Export Document
 // ========================================
 router.get("/:id/export", authMiddleware_js_1.protect, documentController_js_1.exportDocument);
+// ========================================
+// Share Document
+// ========================================
+router.post("/:id/share", authMiddleware_js_1.protect, documentController_js_1.shareDocument);
+// ========================================
+// Get Collaborators
+// ========================================
+router.get("/:id/collaborators", authMiddleware_js_1.protect, documentController_js_1.getCollaborators);
+// ========================================
+// Update Collaborator Permission
+// ========================================
+router.patch("/:id/collaborators/:userId", authMiddleware_js_1.protect, documentController_js_1.updateCollaboratorPermission);
+// ========================================
+// Remove Collaborator
+// ========================================
+router.delete("/:id/collaborators/:userId", authMiddleware_js_1.protect, documentController_js_1.removeCollaborator);
 exports.default = router;
 //# sourceMappingURL=documentRoute.js.map

@@ -17,6 +17,8 @@ import DocumentModel, {
     IBlock
 } from "../models/Document.js";
 
+import crypto from "crypto";
+
 // ========================================
 // Yjs Documents
 // ========================================
@@ -733,8 +735,14 @@ ws.on(
         }
 
         // --------------------------------
-        // Verify document ownership
+        // Verify document access
         // --------------------------------
+        // A user can connect if they are:
+        // 1. The document owner, OR
+        // 2. A collaborator on the document
+        //
+        // We do NOT trust a userId from the WebSocket URL.
+        // userId comes from the verified JWT above.
 
         let document;
 
@@ -742,7 +750,14 @@ ws.on(
             document =
                 await DocumentModel.findOne({
                     _id: documentId,
-                    owner: userId
+                    $or: [
+                        {
+                            owner: userId
+                        },
+                        {
+                            "collaborators.user": userId
+                        }
+                    ]
                 });
         } catch {
             console.log(
@@ -763,12 +778,37 @@ ws.on(
             return;
         }
 
+        // --------------------------------
+        // Get user's document permission
+        // --------------------------------
+
+        const isOwner =
+            document.owner.toString() === userId;
+
+        const collaborator =
+            document.collaborators.find(
+                (item) =>
+                    item.user.toString() ===
+                    userId
+            );
+
+        const permission =
+            isOwner
+                ? "owner"
+                : collaborator?.permission;
+
+        const canEdit =
+            permission === "owner" ||
+            permission === "edit";
+
         console.log(
             "Authorized WebSocket connection:",
             "document:",
             documentId,
             "user:",
-            userId
+            userId,
+            "permission:",
+            permission
         );
 
         // ========================================
@@ -909,6 +949,18 @@ ws.on(
                         "lock"
                     ) {
 
+                        if (!canEdit) {
+                            socket.send(
+                                JSON.stringify({
+                                    type: "lockResult",
+                                    blockId: controlMessage.blockId,
+                                    granted: false,
+                                    reason: "You have view-only permission"
+                                })
+                            );
+                            return;
+                        }
+
                         const blockId =
                             controlMessage.blockId;
 
@@ -1038,6 +1090,18 @@ ws.on(
                         "unlock"
                     ) {
 
+                        if (!canEdit) {
+                            socket.send(
+                                JSON.stringify({
+                                    type: "unlockResult",
+                                    blockId: controlMessage.blockId,
+                                    released: false,
+                                    reason: "You have view-only permission"
+                                })
+                            );
+                            return;
+                        }
+
                         const blockId =
                             controlMessage.blockId;
 
@@ -1136,6 +1200,26 @@ ws.on(
                         "request-delete"
                     ) {
 
+                        // --------------------------------
+                        // Check edit permission
+                        // --------------------------------
+
+                        if (!canEdit) {
+
+                            socket.send(
+                                JSON.stringify({
+                                    type: "deleteResult",
+                                    blockId:
+                                        controlMessage.blockId,
+                                    deleted: false,
+                                    reason:
+                                        "You have view-only permission"
+                                })
+                            );
+
+                            return;
+                        }
+
                         const blockId =
                             controlMessage.blockId;
 
@@ -1143,24 +1227,22 @@ ws.on(
                             return;
                         }
 
+                        // --------------------------------
+                        // Check block exists
+                        // --------------------------------
+
                         const blocks =
                             ydoc!.getMap<Y.Text>(
                                 "blocks"
                             );
 
-                        if (
-                            !blocks.has(
-                                blockId
-                            )
-                        ) {
+                        if (!blocks.has(blockId)) {
 
                             socket.send(
                                 JSON.stringify({
-                                    type:
-                                        "deleteResult",
+                                    type: "deleteResult",
                                     blockId,
-                                    deleted:
-                                        false,
+                                    deleted: false,
                                     reason:
                                         "Block does not exist"
                                 })
@@ -1169,21 +1251,11 @@ ws.on(
                             return;
                         }
 
-                        const blockLocks =
-                            ydoc!.getMap<string>(
-                                "blockLocks"
-                            );
+                        // ========================================
+                        // OWNER CAN DELETE IMMEDIATELY
+                        // ========================================
 
-                        const lockOwner =
-                            blockLocks.get(
-                                blockId
-                            );
-
-                        // --------------------------------
-                        // No lock
-                        // --------------------------------
-
-                        if (!lockOwner) {
+                        if (isOwner) {
 
                             const deleteUpdate =
                                 deleteBlockFromYjs(
@@ -1203,16 +1275,14 @@ ws.on(
 
                             socket.send(
                                 JSON.stringify({
-                                    type:
-                                        "deleteResult",
+                                    type: "deleteResult",
                                     blockId,
-                                    deleted:
-                                        true
+                                    deleted: true
                                 })
                             );
 
                             console.log(
-                                "BLOCK DELETED:",
+                                "BLOCK DELETED BY DOCUMENT OWNER:",
                                 blockId,
                                 "by",
                                 userId
@@ -1221,72 +1291,67 @@ ws.on(
                             return;
                         }
 
-                        // --------------------------------
-                        // Current user owns lock
-                        // --------------------------------
-
-                        if (
-                            lockOwner ===
-                            userId
-                        ) {
-
-                            const deleteUpdate =
-                                deleteBlockFromYjs(
-                                    ydoc!,
-                                    blockId
-                                );
-
-                            scheduleDocumentSave(
-                                documentId,
-                                ydoc!
-                            );
-
-                            broadcastUpdate(
-                                documentClients,
-                                deleteUpdate
-                            );
-
-                            socket.send(
-                                JSON.stringify({
-                                    type:
-                                        "deleteResult",
-                                    blockId,
-                                    deleted:
-                                        true
-                                })
-                            );
-
-                            console.log(
-                                "BLOCK DELETED BY LOCK OWNER:",
-                                blockId,
-                                "by",
-                                userId
-                            );
-
-                            return;
-                        }
+                        // ========================================
+                        // COLLABORATOR DELETE
+                        // ALWAYS REQUIRES OWNER APPROVAL
+                        // ========================================
 
                         // --------------------------------
-                        // Block belongs to another user
+                        // Find document owner
                         // --------------------------------
+
+                        const ownerId =
+                            document.owner.toString();
 
                         const ownerSocket =
                             findClientByUserId(
                                 documentId,
-                                lockOwner
+                                ownerId
                             );
+
+                        // --------------------------------
+                        // Owner must be connected
+                        // --------------------------------
 
                         if (!ownerSocket) {
 
                             socket.send(
                                 JSON.stringify({
-                                    type:
-                                        "deleteResult",
+                                    type: "deleteResult",
                                     blockId,
-                                    deleted:
-                                        false,
+                                    deleted: false,
                                     reason:
-                                        "Block owner is not connected"
+                                        "Document owner is not connected. Delete request cannot be approved."
+                                })
+                            );
+
+                            return;
+                        }
+
+                        // --------------------------------
+                        // Prevent duplicate requests
+                        // --------------------------------
+
+                        const existingRequest =
+                            Array.from(
+                                deleteRequests.values()
+                            ).find(
+                                (request) =>
+                                    request.documentId ===
+                                    documentId &&
+                                    request.blockId ===
+                                    blockId
+                            );
+
+                        if (existingRequest) {
+
+                            socket.send(
+                                JSON.stringify({
+                                    type: "delete-pending",
+                                    requestId:
+                                        existingRequest.requestId,
+                                    blockId,
+                                    ownerId
                                 })
                             );
 
@@ -1306,27 +1371,22 @@ ws.on(
                                 requestId,
                                 documentId,
                                 blockId,
-                                requesterId:
-                                    userId,
-                                ownerId:
-                                    lockOwner,
-                                requesterSocket:
-                                    socket
+                                requesterId: userId,
+                                ownerId,
+                                requesterSocket: socket
                             }
                         );
 
                         // --------------------------------
-                        // Tell block owner
+                        // Tell owner
                         // --------------------------------
 
                         ownerSocket.send(
                             JSON.stringify({
-                                type:
-                                    "delete-request",
+                                type: "delete-request",
                                 requestId,
                                 blockId,
-                                requesterId:
-                                    userId
+                                requesterId: userId
                             })
                         );
 
@@ -1336,12 +1396,10 @@ ws.on(
 
                         socket.send(
                             JSON.stringify({
-                                type:
-                                    "delete-pending",
+                                type: "delete-pending",
                                 requestId,
                                 blockId,
-                                ownerId:
-                                    lockOwner
+                                ownerId
                             })
                         );
 
@@ -1353,7 +1411,7 @@ ws.on(
                             "requester:",
                             userId,
                             "owner:",
-                            lockOwner
+                            ownerId
                         );
 
                         return;
@@ -1367,6 +1425,26 @@ ws.on(
                         controlMessage.type ===
                         "approve-delete"
                     ) {
+
+                        // --------------------------------
+                        // Only document owner can approve
+                        // --------------------------------
+
+                        if (!isOwner) {
+
+                            socket.send(
+                                JSON.stringify({
+                                    type: "deleteResult",
+                                    requestId:
+                                        controlMessage.requestId,
+                                    deleted: false,
+                                    reason:
+                                        "Only the document owner can approve deletion"
+                                })
+                            );
+
+                            return;
+                        }
 
                         const requestId =
                             controlMessage.requestId;
@@ -1384,11 +1462,9 @@ ws.on(
 
                             socket.send(
                                 JSON.stringify({
-                                    type:
-                                        "deleteResult",
+                                    type: "deleteResult",
                                     requestId,
-                                    deleted:
-                                        false,
+                                    deleted: false,
                                     reason:
                                         "Delete request no longer exists"
                                 })
@@ -1398,7 +1474,7 @@ ws.on(
                         }
 
                         // --------------------------------
-                        // Only lock owner can approve
+                        // Verify this owner owns the request
                         // --------------------------------
 
                         if (
@@ -1408,36 +1484,30 @@ ws.on(
 
                             socket.send(
                                 JSON.stringify({
-                                    type:
-                                        "deleteResult",
+                                    type: "deleteResult",
                                     requestId,
-                                    deleted:
-                                        false,
+                                    deleted: false,
                                     reason:
-                                        "Only the block owner can approve"
+                                        "Only the document owner can approve"
                                 })
                             );
 
                             return;
                         }
 
-                        const blockLocks =
-                            ydoc!.getMap<string>(
-                                "blockLocks"
-                            );
-
-                        const currentOwner =
-                            blockLocks.get(
-                                deleteRequest.blockId
-                            );
-
                         // --------------------------------
-                        // Verify lock is still owned
+                        // Check block still exists
                         // --------------------------------
+
+                        const blocks =
+                            ydoc!.getMap<Y.Text>(
+                                "blocks"
+                            );
 
                         if (
-                            currentOwner !==
-                            userId
+                            !blocks.has(
+                                deleteRequest.blockId
+                            )
                         ) {
 
                             deleteRequests.delete(
@@ -1446,15 +1516,13 @@ ws.on(
 
                             socket.send(
                                 JSON.stringify({
-                                    type:
-                                        "deleteResult",
+                                    type: "deleteResult",
                                     requestId,
                                     blockId:
                                         deleteRequest.blockId,
-                                    deleted:
-                                        false,
+                                    deleted: false,
                                     reason:
-                                        "Block lock is no longer owned by you"
+                                        "Block no longer exists"
                                 })
                             );
 
@@ -1509,8 +1577,7 @@ ws.on(
                                         requestId,
                                         blockId:
                                             deleteRequest.blockId,
-                                        deleted:
-                                            true
+                                        deleted: true
                                     })
                                 );
                         }
@@ -1526,8 +1593,7 @@ ws.on(
                                 requestId,
                                 blockId:
                                     deleteRequest.blockId,
-                                deleted:
-                                    true
+                                deleted: true
                             })
                         );
 
@@ -1536,7 +1602,7 @@ ws.on(
                             requestId,
                             "block:",
                             deleteRequest.blockId,
-                            "approved by:",
+                            "approved by document owner:",
                             userId
                         );
 
@@ -1551,6 +1617,18 @@ ws.on(
                         controlMessage.type ===
                         "reject-delete"
                     ) {
+
+                        if (!canEdit) {
+                            socket.send(
+                                JSON.stringify({
+                                    type: "deleteResult",
+                                    requestId: controlMessage.requestId,
+                                    deleted: false,
+                                    reason: "You have view-only permission"
+                                })
+                            );
+                            return;
+                        }
 
                         const requestId =
                             controlMessage.requestId;
@@ -1892,6 +1970,67 @@ ws.on(
                                     "Block locks can only be changed through lock/unlock requests"
                             })
                         );
+
+                        return;
+                    }
+
+                    // ========================================
+                    // PERMISSION CHECK
+                    // ========================================
+
+                    if (!canEdit) {
+
+                        console.log(
+                            "YJS UPDATE REJECTED:",
+                            "View-only user attempted to edit",
+                            "User:",
+                            userId,
+                            "Document:",
+                            documentId
+                        );
+
+                        const viewOnlyBlocks =
+                            ydoc!.getMap<Y.Text>(
+                                "blocks"
+                            );
+
+                        changedBlockIds.forEach(
+                            (blockId) => {
+
+                                const authoritativeBlock =
+                                    viewOnlyBlocks.get(
+                                        blockId
+                                    );
+
+                                socket.send(
+                                    JSON.stringify({
+                                        type:
+                                            "updateRejected",
+                                        blockId,
+                                        reason:
+                                            "You have view-only permission and cannot edit this document",
+                                        content:
+                                            authoritativeBlock instanceof Y.Text
+                                                ? authoritativeBlock.toString()
+                                                : ""
+                                    })
+                                );
+                            }
+                        );
+
+                        if (
+                            changedBlockIds.length ===
+                            0
+                        ) {
+                            socket.send(
+                                JSON.stringify({
+                                    type:
+                                        "updateRejected",
+                                    reason:
+                                        "You have view-only permission and cannot edit this document"
+                                })
+                            );
+                        }
 
                         return;
                     }

@@ -5,7 +5,10 @@ import {
     getDocuments,
     addBlockToDocument,
     exportDocument,
-    shareDocument
+    shareDocument,
+    getCollaborators,
+    updateCollaboratorPermission,
+    removeCollaborator
 } from "../controllers/documentController.js";
 
 import { protect } from "../middlewares/authMiddleware.js";
@@ -42,8 +45,6 @@ router.post(
     addBlockToDocument
 );
 
-
-
 // ========================================
 // Export Document
 // ========================================
@@ -54,10 +55,44 @@ router.get(
     exportDocument
 );
 
+// ========================================
+// Share Document
+// ========================================
+
 router.post(
     "/:id/share",
     protect,
     shareDocument
+);
+
+// ========================================
+// Get Collaborators
+// ========================================
+
+router.get(
+    "/:id/collaborators",
+    protect,
+    getCollaborators
+);
+
+// ========================================
+// Update Collaborator Permission
+// ========================================
+
+router.patch(
+    "/:id/collaborators/:userId",
+    protect,
+    updateCollaboratorPermission
+);
+
+// ========================================
+// Remove Collaborator
+// ========================================
+
+router.delete(
+    "/:id/collaborators/:userId",
+    protect,
+    removeCollaborator
 );
 
 export default router;

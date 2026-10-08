@@ -83,7 +83,7 @@ export const createDocument = async (
 };
 
 // ========================================
-// Get User's Documents
+// Get Documents
 // ========================================
 
 export const getDocuments = async (
@@ -94,7 +94,7 @@ export const getDocuments = async (
     try {
 
         // --------------------------------
-        // Check authenticated user
+        // Check authentication
         // --------------------------------
 
         if (!req.userId) {
@@ -107,24 +107,53 @@ export const getDocuments = async (
         }
 
         // --------------------------------
-        // Get ONLY user's documents
+        // Get owned + shared documents
         // --------------------------------
 
         const documents =
             await DocumentModel.find({
-                owner: req.userId
-            }).sort({
-                updatedAt: -1
-            });
+                $or: [
+                    {
+                        owner: req.userId
+                    },
+                    {
+                        "collaborators.user":
+                            req.userId
+                    }
+                ]
+            })
+                .sort({
+                    updatedAt: -1
+                })
+                .lean();
+
+        // --------------------------------
+        // Normalize old documents
+        // --------------------------------
+
+        const normalizedDocuments =
+            documents.map((document) => ({
+                ...document,
+
+                collaborators:
+                    document.collaborators || [],
+
+                blocks:
+                    document.blocks || []
+            }));
+
+        // --------------------------------
+        // Return documents
+        // --------------------------------
 
         res.status(200).json(
-            documents
+            normalizedDocuments
         );
 
     } catch (error) {
 
         console.error(
-            "Failed to fetch documents:",
+            "Get documents error:",
             error
         );
 
@@ -564,6 +593,280 @@ export const shareDocument = async (
         res.status(500).json({
             message:
                 "Failed to share document"
+        });
+    }
+};
+
+// ========================================
+// Get Collaborators
+// ========================================
+
+export const getCollaborators = async (
+    req: Request,
+    res: Response
+): Promise<void> => {
+    try {
+        // --------------------------------
+        // Check authentication
+        // --------------------------------
+
+        if (!req.userId) {
+            res.status(401).json({
+                message: "Not authenticated"
+            });
+            return;
+        }
+
+        const { id } = req.params;
+
+        // --------------------------------
+        // Find document owned by user
+        // --------------------------------
+
+        const document = await DocumentModel.findOne({
+            _id: id,
+            owner: req.userId
+        });
+
+        if (!document) {
+            res.status(404).json({
+                message: "Document not found or you are not the owner"
+            });
+            return;
+        }
+
+        // --------------------------------
+        // Get collaborator user details
+        // --------------------------------
+
+        const collaborators = await Promise.all(
+            document.collaborators.map(async (collaborator) => {
+                const user = await UserModel.findById(
+                    collaborator.user
+                ).select("name email");
+
+                if (!user) {
+                    return null;
+                }
+
+                return {
+                    id: user._id,
+                    name: user.name,
+                    email: user.email,
+                    permission: collaborator.permission
+                };
+            })
+        );
+
+        // Remove null users
+        const validCollaborators = collaborators.filter(
+            (collaborator) => collaborator !== null
+        );
+
+        res.status(200).json({
+            collaborators: validCollaborators
+        });
+
+    } catch (error) {
+        console.error(
+            "Get collaborators error:",
+            error
+        );
+
+        res.status(500).json({
+            message: "Failed to get collaborators"
+        });
+    }
+};
+
+
+// ========================================
+// Update Collaborator Permission
+// ========================================
+
+export const updateCollaboratorPermission = async (
+    req: Request,
+    res: Response
+): Promise<void> => {
+    try {
+        // --------------------------------
+        // Check authentication
+        // --------------------------------
+
+        if (!req.userId) {
+            res.status(401).json({
+                message: "Not authenticated"
+            });
+            return;
+        }
+
+        const { id, userId } = req.params;
+        const { permission } = req.body;
+
+        // --------------------------------
+        // Validate permission
+        // --------------------------------
+
+        if (
+            permission !== "view" &&
+            permission !== "edit"
+        ) {
+            res.status(400).json({
+                message: "Permission must be view or edit"
+            });
+            return;
+        }
+
+        // --------------------------------
+        // Find document owned by user
+        // --------------------------------
+
+        const document = await DocumentModel.findOne({
+            _id: id,
+            owner: req.userId
+        });
+
+        if (!document) {
+            res.status(404).json({
+                message: "Document not found or you are not the owner"
+            });
+            return;
+        }
+
+        // --------------------------------
+        // Find collaborator
+        // --------------------------------
+
+        const collaborator = document.collaborators.find(
+            (item) =>
+                item.user.toString() === userId
+        );
+
+        if (!collaborator) {
+            res.status(404).json({
+                message: "Collaborator not found"
+            });
+            return;
+        }
+
+        // --------------------------------
+        // Update permission
+        // --------------------------------
+
+        collaborator.permission = permission;
+
+        await document.save();
+
+        // --------------------------------
+        // Get updated user
+        // --------------------------------
+
+        const user = await UserModel.findById(
+            userId
+        ).select("name email");
+
+        res.status(200).json({
+            message: "Collaborator permission updated successfully",
+            collaborator: {
+                id: userId,
+                name: user?.name,
+                email: user?.email,
+                permission
+            }
+        });
+
+    } catch (error) {
+        console.error(
+            "Update collaborator permission error:",
+            error
+        );
+
+        res.status(500).json({
+            message: "Failed to update collaborator permission"
+        });
+    }
+};
+
+
+// ========================================
+// Remove Collaborator
+// ========================================
+
+export const removeCollaborator = async (
+    req: Request,
+    res: Response
+): Promise<void> => {
+    try {
+        // --------------------------------
+        // Check authentication
+        // --------------------------------
+
+        if (!req.userId) {
+            res.status(401).json({
+                message: "Not authenticated"
+            });
+            return;
+        }
+
+        const { id, userId } = req.params;
+
+        // --------------------------------
+        // Find document owned by user
+        // --------------------------------
+
+        const document = await DocumentModel.findOne({
+            _id: id,
+            owner: req.userId
+        });
+
+        if (!document) {
+            res.status(404).json({
+                message: "Document not found or you are not the owner"
+            });
+            return;
+        }
+
+        // --------------------------------
+        // Find collaborator
+        // --------------------------------
+
+        const collaboratorExists =
+            document.collaborators.some(
+                (item) =>
+                    item.user.toString() === userId
+            );
+
+        if (!collaboratorExists) {
+            res.status(404).json({
+                message: "Collaborator not found"
+            });
+            return;
+        }
+
+        // --------------------------------
+        // Remove collaborator
+        // --------------------------------
+
+        document.collaborators =
+            document.collaborators.filter(
+                (item) =>
+                    item.user.toString() !== userId
+            );
+
+        await document.save();
+
+        res.status(200).json({
+            message: "Collaborator removed successfully"
+        });
+
+    } catch (error) {
+        console.error(
+            "Remove collaborator error:",
+            error
+        );
+
+        res.status(500).json({
+            message: "Failed to remove collaborator"
         });
     }
 };

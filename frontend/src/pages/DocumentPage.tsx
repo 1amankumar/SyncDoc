@@ -22,6 +22,10 @@ import {
 } from "../services/websocketService";
 
 import {
+    getCurrentUser
+} from "../services/authService";
+
+import {
     useBlockContext
 } from "../context/BlockContext";
 
@@ -73,10 +77,121 @@ function DocumentPage({
     );
 
     // ========================================
+    // Permission State
+    // ========================================
+
+    const [
+        canEdit,
+        setCanEdit
+    ] = useState<boolean>(false);
+
+    const [
+        permissionLoading,
+        setPermissionLoading
+    ] = useState<boolean>(true);
+
+    // ========================================
     // Block Context
     // ========================================
 
     useBlockContext();
+
+    // ========================================
+    // Check Document Permission
+    // ========================================
+
+    useEffect(() => {
+
+        const checkPermission = async () => {
+
+            try {
+
+                setPermissionLoading(true);
+
+                const user =
+                    await getCurrentUser();
+
+                // --------------------------------
+                // No authenticated user
+                // --------------------------------
+
+                if (!user) {
+
+                    setCanEdit(false);
+
+                    return;
+                }
+
+                const currentUserId =
+                    user._id.toString();
+
+                const documentOwnerId =
+                    document.owner?.toString();
+
+                // --------------------------------
+                // Owner can edit
+                // --------------------------------
+
+                if (
+                    documentOwnerId ===
+                    currentUserId
+                ) {
+
+                    setCanEdit(true);
+
+                    return;
+                }
+
+                // --------------------------------
+                // Check collaborator permission
+                // --------------------------------
+
+                const collaborator =
+                    document.collaborators?.find(
+                        (item) =>
+                            item.user?.toString() ===
+                            currentUserId
+                    );
+
+                // --------------------------------
+                // Edit collaborator
+                // --------------------------------
+
+                if (
+                    collaborator?.permission ===
+                    "edit"
+                ) {
+
+                    setCanEdit(true);
+
+                    return;
+                }
+
+                // --------------------------------
+                // View-only collaborator
+                // --------------------------------
+
+                setCanEdit(false);
+
+            } catch (error) {
+
+                console.error(
+                    "Failed to determine document permission:",
+                    error
+                );
+
+                setCanEdit(false);
+
+            } finally {
+
+                setPermissionLoading(false);
+
+            }
+        };
+
+        checkPermission();
+
+    }, [document]);
 
     // ========================================
     // Collaborator Updates
@@ -87,9 +202,11 @@ function DocumentPage({
         const removeListener =
             onCollaboratorsUpdate(
                 (state) => {
+
                     setCollaboratorState(
                         state
                     );
+
                 }
             );
 
@@ -121,9 +238,9 @@ function DocumentPage({
             orderedBlockIds.forEach(
                 (blockId) => {
 
-                    // ----------------------------
+                    // --------------------------------
                     // Get shared text
-                    // ----------------------------
+                    // --------------------------------
 
                     const sharedText =
                         blocks.get(
@@ -134,20 +251,21 @@ function DocumentPage({
                         return;
                     }
 
-                    // ----------------------------
+                    // --------------------------------
                     // Get block type
-                    // ----------------------------
+                    // --------------------------------
 
                     const blockType =
                         blockTypes.get(
                             blockId
                         );
 
-                    // ----------------------------
+                    // --------------------------------
                     // Create React block
-                    // ----------------------------
+                    // --------------------------------
 
                     newBlocks.push({
+
                         _id: blockId,
 
                         type:
@@ -158,21 +276,14 @@ function DocumentPage({
                             sharedText.toString(),
 
                         children: []
+
                     });
+
                 }
             );
 
             // ====================================
             // Fallback for existing MongoDB blocks
-            // ====================================
-            //
-            // Important:
-            // Do not restore old MongoDB blocks
-            // after Yjs synchronization has
-            // completed.
-            //
-            // This prevents deleted blocks from
-            // coming back into the UI.
             // ====================================
 
             if (
@@ -180,6 +291,7 @@ function DocumentPage({
                 document.blocks.length > 0 &&
                 !isSyncReady()
             ) {
+
                 setCollaborativeBlocks(
                     document.blocks
                 );
@@ -194,6 +306,7 @@ function DocumentPage({
             setCollaborativeBlocks(
                 newBlocks
             );
+
         };
 
         // ========================================
@@ -243,6 +356,7 @@ function DocumentPage({
             blocks.unobserve(
                 rebuildBlocks
             );
+
         };
 
     }, [
@@ -284,13 +398,11 @@ function DocumentPage({
                 setSyncCompleted(
                     true
                 );
+
             });
 
         // ----------------------------------------
         // Safety check
-        //
-        // This handles the case where the WebSocket
-        // becomes ready between render and effect.
         // ----------------------------------------
 
         const syncCheck =
@@ -307,6 +419,7 @@ function DocumentPage({
                     window.clearInterval(
                         syncCheck
                     );
+
                 }
 
             }, 100);
@@ -322,6 +435,7 @@ function DocumentPage({
             window.clearInterval(
                 syncCheck
             );
+
         };
 
     }, [
@@ -337,6 +451,19 @@ function DocumentPage({
         content: string
     ): void => {
 
+        // --------------------------------
+        // View users cannot edit
+        // --------------------------------
+
+        if (!canEdit) {
+
+            console.warn(
+                "View-only user cannot edit block."
+            );
+
+            return;
+        }
+
         setCollaborativeBlocks(
             (currentBlocks) =>
                 currentBlocks.map(
@@ -346,16 +473,22 @@ function DocumentPage({
                             block._id !==
                             blockId
                         ) {
+
                             return block;
                         }
 
                         return {
+
                             ...block,
+
                             content
+
                         };
+
                     }
                 )
         );
+
     };
 
     // ========================================
@@ -365,6 +498,23 @@ function DocumentPage({
     const handleAddBlock = (
         type: Block["type"]
     ): void => {
+
+        // --------------------------------
+        // Permission check
+        // --------------------------------
+
+        if (!canEdit) {
+
+            console.warn(
+                "View-only user cannot add blocks."
+            );
+
+            return;
+        }
+
+        // --------------------------------
+        // Sync check
+        // --------------------------------
 
         if (
             !syncCompleted
@@ -391,7 +541,9 @@ function DocumentPage({
                 blockId,
                 type
             );
+
         }
+
     };
 
     // ========================================
@@ -399,6 +551,7 @@ function DocumentPage({
     // ========================================
 
     return (
+
         <div
             className="
                 min-h-[400px]
@@ -483,6 +636,7 @@ function DocumentPage({
                         <div>
 
                             {syncCompleted ? (
+
                                 <span
                                     className="
                                         inline-flex
@@ -497,6 +651,7 @@ function DocumentPage({
                                         text-emerald-700
                                     "
                                 >
+
                                     <span
                                         className="
                                             h-2
@@ -507,8 +662,11 @@ function DocumentPage({
                                     />
 
                                     Synced
+
                                 </span>
+
                             ) : (
+
                                 <span
                                     className="
                                         inline-flex
@@ -523,6 +681,7 @@ function DocumentPage({
                                         text-amber-700
                                     "
                                 >
+
                                     <span
                                         className="
                                             h-2
@@ -534,10 +693,42 @@ function DocumentPage({
                                     />
 
                                     Syncing
+
                                 </span>
+
                             )}
 
                         </div>
+
+                        {/* Permission Status */}
+
+                        {!permissionLoading && (
+
+                            <span
+                                className={`
+                                    inline-flex
+                                    items-center
+                                    gap-2
+                                    rounded-full
+                                    px-3
+                                    py-1.5
+                                    text-xs
+                                    font-semibold
+                                    ${
+                                        canEdit
+                                            ? "bg-blue-50 text-blue-700"
+                                            : "bg-slate-100 text-slate-600"
+                                    }
+                                `}
+                            >
+
+                                {canEdit
+                                    ? "✏️ Edit access"
+                                    : "👁️ View only"}
+
+                            </span>
+
+                        )}
 
                         {/* Collaborator Count */}
 
@@ -561,10 +752,16 @@ function DocumentPage({
                             </span>
 
                             <span>
+
                                 {collaboratorState.count}{" "}
-                                {collaboratorState.count === 1
-                                    ? "user"
-                                    : "users"}
+
+                                {
+                                    collaboratorState.count ===
+                                    1
+                                        ? "user"
+                                        : "users"
+                                }
+
                             </span>
 
                         </div>
@@ -578,6 +775,7 @@ function DocumentPage({
                 {/* ================================== */}
 
                 {collaboratorState.count > 0 && (
+
                     <div
                         className="
                             mt-4
@@ -590,6 +788,7 @@ function DocumentPage({
 
                         {collaboratorState.users.map(
                             (user) => (
+
                                 <div
                                     key={user.id}
                                     className="
@@ -620,9 +819,11 @@ function DocumentPage({
                                             text-blue-700
                                         "
                                     >
+
                                         {user.name
                                             .charAt(0)
                                             .toUpperCase()}
+
                                     </span>
 
                                     <span>
@@ -630,10 +831,12 @@ function DocumentPage({
                                     </span>
 
                                 </div>
+
                             )
                         )}
 
                     </div>
+
                 )}
 
             </div>
@@ -642,120 +845,155 @@ function DocumentPage({
             {/* Add Block Toolbar */}
             {/* ================================== */}
 
-            <div
-                className="
-                    flex
-                    flex-wrap
-                    items-center
-                    gap-2
-                    border-b
-                    border-slate-200
-                    px-6
-                    py-3
-                "
-            >
+            {canEdit && (
 
-                <span
+                <div
                     className="
-                        mr-2
-                        text-xs
-                        font-semibold
-                        uppercase
-                        tracking-wide
-                        text-slate-400
-                    "
-                >
-                    Add Block
-                </span>
-
-                {/* Paragraph */}
-
-                <button
-                    type="button"
-                    disabled={!syncCompleted}
-                    onClick={() =>
-                        handleAddBlock(
-                            "paragraph"
-                        )
-                    }
-                    className="
-                        rounded-lg
-                        border
+                        flex
+                        flex-wrap
+                        items-center
+                        gap-2
+                        border-b
                         border-slate-200
-                        bg-white
-                        px-3
-                        py-1.5
-                        text-xs
-                        font-medium
-                        text-slate-700
-                        transition
-                        hover:bg-slate-50
-                        disabled:cursor-not-allowed
-                        disabled:opacity-50
+                        px-6
+                        py-3
                     "
                 >
-                    + Paragraph
-                </button>
 
-                {/* Heading */}
+                    <span
+                        className="
+                            mr-2
+                            text-xs
+                            font-semibold
+                            uppercase
+                            tracking-wide
+                            text-slate-400
+                        "
+                    >
+                        Add Block
+                    </span>
 
-                <button
-                    type="button"
-                    disabled={!syncCompleted}
-                    onClick={() =>
-                        handleAddBlock(
-                            "heading"
-                        )
-                    }
-                    className="
-                        rounded-lg
-                        border
-                        border-slate-200
-                        bg-white
-                        px-3
-                        py-1.5
-                        text-xs
-                        font-medium
-                        text-slate-700
-                        transition
-                        hover:bg-slate-50
-                        disabled:cursor-not-allowed
-                        disabled:opacity-50
-                    "
-                >
-                    + Heading
-                </button>
+                    {/* Paragraph */}
 
-                {/* Code */}
+                    <button
+                        type="button"
+                        disabled={
+                            !syncCompleted
+                        }
+                        onClick={() =>
+                            handleAddBlock(
+                                "paragraph"
+                            )
+                        }
+                        className="
+                            rounded-lg
+                            border
+                            border-slate-200
+                            bg-white
+                            px-3
+                            py-1.5
+                            text-xs
+                            font-medium
+                            text-slate-700
+                            transition
+                            hover:bg-slate-50
+                            disabled:cursor-not-allowed
+                            disabled:opacity-50
+                        "
+                    >
+                        + Paragraph
+                    </button>
 
-                <button
-                    type="button"
-                    disabled={!syncCompleted}
-                    onClick={() =>
-                        handleAddBlock(
-                            "code"
-                        )
-                    }
-                    className="
-                        rounded-lg
-                        border
-                        border-slate-200
-                        bg-white
-                        px-3
-                        py-1.5
-                        text-xs
-                        font-medium
-                        text-slate-700
-                        transition
-                        hover:bg-slate-50
-                        disabled:cursor-not-allowed
-                        disabled:opacity-50
-                    "
-                >
-                    + Code
-                </button>
+                    {/* Heading */}
 
-            </div>
+                    <button
+                        type="button"
+                        disabled={
+                            !syncCompleted
+                        }
+                        onClick={() =>
+                            handleAddBlock(
+                                "heading"
+                            )
+                        }
+                        className="
+                            rounded-lg
+                            border
+                            border-slate-200
+                            bg-white
+                            px-3
+                            py-1.5
+                            text-xs
+                            font-medium
+                            text-slate-700
+                            transition
+                            hover:bg-slate-50
+                            disabled:cursor-not-allowed
+                            disabled:opacity-50
+                        "
+                    >
+                        + Heading
+                    </button>
+
+                    {/* Code */}
+
+                    <button
+                        type="button"
+                        disabled={
+                            !syncCompleted
+                        }
+                        onClick={() =>
+                            handleAddBlock(
+                                "code"
+                            )
+                        }
+                        className="
+                            rounded-lg
+                            border
+                            border-slate-200
+                            bg-white
+                            px-3
+                            py-1.5
+                            text-xs
+                            font-medium
+                            text-slate-700
+                            transition
+                            hover:bg-slate-50
+                            disabled:cursor-not-allowed
+                            disabled:opacity-50
+                        "
+                    >
+                        + Code
+                    </button>
+
+                </div>
+
+            )}
+
+            {/* ================================== */}
+            {/* View Only Message */}
+            {/* ================================== */}
+
+            {!permissionLoading &&
+                !canEdit && (
+
+                    <div
+                        className="
+                            border-b
+                            border-slate-200
+                            bg-slate-50
+                            px-6
+                            py-3
+                            text-xs
+                            font-medium
+                            text-slate-600
+                        "
+                    >
+                        👁️ You have view-only access to
+                        this document.
+                    </div>
+
+                )}
 
             {/* ================================== */}
             {/* Editor Content */}
@@ -773,6 +1011,7 @@ function DocumentPage({
                 {/* -------------------------------- */}
 
                 {!syncCompleted && (
+
                     <div
                         className="
                             rounded-xl
@@ -785,8 +1024,10 @@ function DocumentPage({
                             text-amber-700
                         "
                     >
-                        Synchronizing collaborative document...
+                        Synchronizing collaborative
+                        document...
                     </div>
+
                 )}
 
                 {/* -------------------------------- */}
@@ -794,6 +1035,7 @@ function DocumentPage({
                 {/* -------------------------------- */}
 
                 {syncCompleted && (
+
                     <>
 
                         {/* ================================ */}
@@ -801,6 +1043,7 @@ function DocumentPage({
                         {/* ================================ */}
 
                         {collaborativeBlocks.length === 0 && (
+
                             <div
                                 className="
                                     rounded-xl
@@ -851,34 +1094,40 @@ function DocumentPage({
                                         text-slate-500
                                     "
                                 >
-                                    Start writing by adding a
-                                    paragraph, heading, or code block.
+                                    {canEdit
+                                        ? "Start writing by adding a paragraph, heading, or code block."
+                                        : "This document does not contain any blocks yet."}
                                 </p>
 
-                                <button
-                                    type="button"
-                                    onClick={() =>
-                                        handleAddBlock(
-                                            "paragraph"
-                                        )
-                                    }
-                                    className="
-                                        mt-5
-                                        rounded-lg
-                                        bg-slate-900
-                                        px-4
-                                        py-2
-                                        text-xs
-                                        font-semibold
-                                        text-white
-                                        transition
-                                        hover:bg-slate-700
-                                    "
-                                >
-                                    Add your first block
-                                </button>
+                                {canEdit && (
+
+                                    <button
+                                        type="button"
+                                        onClick={() =>
+                                            handleAddBlock(
+                                                "paragraph"
+                                            )
+                                        }
+                                        className="
+                                            mt-5
+                                            rounded-lg
+                                            bg-slate-900
+                                            px-4
+                                            py-2
+                                            text-xs
+                                            font-semibold
+                                            text-white
+                                            transition
+                                            hover:bg-slate-700
+                                        "
+                                    >
+                                        Add your first block
+                                    </button>
+
+                                )}
 
                             </div>
+
                         )}
 
                         {/* ================================ */}
@@ -886,6 +1135,7 @@ function DocumentPage({
                         {/* ================================ */}
 
                         {collaborativeBlocks.length > 0 && (
+
                             <div
                                 className="
                                     space-y-4
@@ -894,6 +1144,7 @@ function DocumentPage({
 
                                 {collaborativeBlocks.map(
                                     (block) => (
+
                                         <BlockRenderer
                                             key={
                                                 block._id
@@ -904,19 +1155,26 @@ function DocumentPage({
                                             onBlockContentChange={
                                                 handleBlockContentChange
                                             }
+                                            canEdit={
+                                                canEdit
+                                            }
                                         />
+
                                     )
                                 )}
 
                             </div>
+
                         )}
 
                     </>
+
                 )}
 
             </div>
 
         </div>
+
     );
 }
 

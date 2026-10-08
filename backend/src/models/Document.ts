@@ -1,6 +1,6 @@
 import mongoose, {
-    Document as MongoDocument,
-    Schema
+    Schema,
+    Types
 } from "mongoose";
 
 // ========================================
@@ -19,7 +19,7 @@ export interface IBlock {
 // ========================================
 
 export interface ICollaborator {
-    user: mongoose.Types.ObjectId;
+    user: Types.ObjectId;
     permission: "view" | "edit";
 }
 
@@ -27,56 +27,52 @@ export interface ICollaborator {
 // Document Interface
 // ========================================
 
-export interface IDocument
-    extends MongoDocument {
-
+export interface IDocument {
     title: string;
-
     blocks: IBlock[];
-
-    owner: mongoose.Types.ObjectId;
-
+    owner: Types.ObjectId;
     collaborators: ICollaborator[];
+    createdAt?: Date;
+    updatedAt?: Date;
 }
 
 // ========================================
 // Block Schema
 // ========================================
 
-const blockSchema =
-    new Schema<IBlock>(
-        {
-            _id: {
-                type: String,
-                required: true
-            },
-
-            type: {
-                type: String,
-                required: true
-            },
-
-            content: {
-                type: String,
-                default: ""
-            },
-
-            children: {
-                type: [],
-                default: []
-            }
+const blockSchema = new Schema(
+    {
+        _id: {
+            type: String,
+            required: true
         },
-        {
-            _id: false
+
+        type: {
+            type: String,
+            required: true
+        },
+
+        content: {
+            type: String,
+            default: ""
+        },
+
+        children: {
+            type: [Schema.Types.Mixed],
+            default: []
         }
-    );
+    },
+    {
+        _id: false
+    }
+);
 
 // ========================================
 // Collaborator Schema
 // ========================================
 
 const collaboratorSchema =
-    new Schema<ICollaborator>(
+    new Schema(
         {
             user: {
                 type: Schema.Types.ObjectId,
@@ -86,12 +82,9 @@ const collaboratorSchema =
 
             permission: {
                 type: String,
-                enum: [
-                    "view",
-                    "edit"
-                ],
-                default: "view",
-                required: true
+                enum: ["view", "edit"],
+                required: true,
+                default: "view"
             }
         },
         {
@@ -134,7 +127,7 @@ const documentSchema =
     );
 
 // ========================================
-// Export Model
+// Mongoose Model
 // ========================================
 
 const DocumentModel =
