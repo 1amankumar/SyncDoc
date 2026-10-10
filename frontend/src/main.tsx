@@ -1,10 +1,18 @@
-import { StrictMode } from 'react'
-import { createRoot } from 'react-dom/client'
+import React from "react";
+import ReactDOM from "react-dom/client";
+import App from "./app";
+import "./index.css";
+import { BlockProvider } from "./context/BlockContext";
+import { ToastProvider } from "./context/ToastContext";
 
-import App from './app.tsx'
-
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
-)
+ReactDOM.createRoot(
+  document.getElementById("root")!
+).render(
+  <React.StrictMode>
+    <ToastProvider>
+      <BlockProvider>
+        <App />
+      </BlockProvider>
+    </ToastProvider>
+  </React.StrictMode>
+);

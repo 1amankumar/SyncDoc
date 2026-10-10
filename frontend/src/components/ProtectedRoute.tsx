@@ -1,72 +1,38 @@
 import { useEffect, useState } from "react";
-import {
-    Navigate,
-    Outlet
-} from "react-router-dom";
-
+import { Navigate, Outlet } from "react-router-dom";
 import { getCurrentUser } from "../services/authService";
+import { Loader2 } from "lucide-react";
 
 function ProtectedRoute() {
-
-    const [loading, setLoading] =
-        useState(true);
-
-    const [authenticated, setAuthenticated] =
-        useState(false);
+    const [loading, setLoading] = useState(true);
+    const [authenticated, setAuthenticated] = useState(false);
 
     useEffect(() => {
-
         const checkAuth = async () => {
-
             try {
-
                 await getCurrentUser();
-
-                console.log(
-                    "PROTECTED ROUTE: USER AUTHENTICATED"
-                );
-
                 setAuthenticated(true);
-
             } catch (error) {
-
-                console.log(
-                    "PROTECTED ROUTE: USER NOT AUTHENTICATED"
-                );
-
                 setAuthenticated(false);
-
             } finally {
-
                 setLoading(false);
-
             }
         };
 
         checkAuth();
-
     }, []);
 
     if (loading) {
         return (
-            <p>
-                Checking authentication...
-            </p>
+            <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 gap-3">
+                <Loader2 className="w-8 h-8 animate-spin text-indigo-600" />
+                <p className="text-xs text-slate-500 font-medium">Verifying credentials...</p>
+            </div>
         );
     }
 
     if (!authenticated) {
-
-        console.log(
-            "PROTECTED ROUTE: REDIRECTING TO LOGIN"
-        );
-
-        return (
-            <Navigate
-                to="/login"
-                replace
-            />
-        );
+        return <Navigate to="/login" replace />;
     }
 
     return <Outlet />;
